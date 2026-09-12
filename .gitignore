@@ -4,3 +4,6 @@ node_modules/
 *.log
 Thumbs.db
 .DS_Store
+
+# Signed agreement stays local; the repo is public.
+contract/
