@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Track your order — A1 Opticals</title>
+<meta name="theme-color" content="#14181A">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="stylesheet" href="store.css">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%2314181A'/><text x='50' y='67' text-anchor='middle' font-family='Helvetica,Arial,sans-serif' font-size='48' font-weight='700' fill='%23FFFFFF'>A1</text></svg>">
+</head>
+<body data-page="track.html">
+<div id="chrome-top"></div>
+
+<main id="main">
+  <div class="wrap">
+    <div class="page-head" style="border:0">
+      <div class="crumb"><a href="index.html">Home</a> / Track order</div>
+      <h1>Track your order</h1>
+    </div>
+
+    <div class="cart" style="padding-top:6px">
+      <div>
+        <div class="panel" style="max-width:640px">
+          <p style="font-size:14.5px;color:var(--ink-2);margin-bottom:16px">The reference is on your receipt and in the WhatsApp we sent — it looks like <span class="tnum" style="font-family:var(--f-mono)">A1-260911-4821</span>.</p>
+          <form id="trackForm" novalidate>
+            <div class="row2">
+              <div class="field"><label for="tRef">Order reference</label><input id="tRef" placeholder="A1-260911-4821" autocomplete="off" style="text-transform:uppercase"></div>
+              <div class="field"><label for="tPhone">Mobile number on the order</label><input id="tPhone" type="tel" inputmode="numeric" placeholder="98765 43210"></div>
+            </div>
+            <p class="err" id="tErr" hidden style="color:#B3261E;font-size:13px;margin:-6px 0 12px"></p>
+            <button type="submit" class="btn btn-primary">Find my order</button>
+          </form>
+        </div>
+        <div id="result" style="margin-top:22px"></div>
+      </div>
+      <aside>
+        <div class="panel">
+          <h3>Where your glasses are</h3>
+          <p style="font-size:14px;color:var(--ink-2)">Powered lenses are cut and fitted in our own lab, usually within 48 hours of receiving your prescription. Then the van in the Tricity, or a courier beyond it. You get a WhatsApp at every step.</p>
+          <p style="font-size:14px;color:var(--ink-2);margin-top:12px">Need it sooner? <a href="index.html#visit" style="color:var(--teal);font-weight:600">Call the store</a> with the reference.</p>
+        </div>
+      </aside>
+    </div>
+  </div>
+</main>
+
+<div id="chrome-foot"></div>
+
+<script src="catalog.js"></script>
+<script src="site.js"></script>
+<script src="store.js"></script>
+<script src="chrome.js"></script>
+<script>
+(function(){
+  'use strict';
+  var esc = window.escapeHtml;
+  var fmt = { weekday: 'short', day: 'numeric', month: 'short' };
+
+  /* The stages an order passes through, in order. The owner sets the
+     current one from the dashboard; everything before it shows as done. */
+  function stages(o){
+    var rx = o.items.some(function(i){ return i.needsRx; });
+    var collect = o.delivery && o.delivery.method === 'collect';
+    var list = [{ id: 'confirmed', t: 'Order confirmed', s: 'Payment received and the order is with us' }];
+    if (rx) list.push({ id: 'awaiting prescription', t: 'Prescription', s: 'We have your power, or are waiting for it' });
+    if (rx) list.push({ id: 'in lab', t: 'In the lab', s: 'Lenses cut to your power and fitted to the frame' });
+    list.push({ id: 'packed', t: 'Packed', s: 'Checked against the order and boxed with the case' });
+    if (collect) list.push({ id: 'ready to collect', t: 'Ready to collect', s: 'Waiting at the counter — ask for the reference' });
+    else list.push({ id: 'shipped', t: o.delivery && o.delivery.method === 'courier' ? 'With the courier' : 'On the van', s: o.delivery && o.delivery.method === 'courier' ? (o.delivery.days || '4–7 working days') : 'The driver messages you before arriving' });
+    list.push({ id: 'delivered', t: collect ? 'Collected' : 'Delivered', s: '14-day returns start today' });
+    return list;
+  }
+
+  function show(o){
+    var st = Store.statusOf(o);
+    var list = stages(o);
+    var idx = list.map(function(s){ return s.id; }).indexOf(st);
+    if (st === 'cancelled') idx = -2;
+    var when = new Date(o.placedAt);
+    document.getElementById('result').innerHTML =
+      '<div class="panel" style="max-width:640px">' +
+        '<div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline">' +
+          '<div><div class="mono">' + esc(o.ref) + '</div><h3 style="margin:6px 0 0">' + esc(o.items.map(function(i){ return i.name; }).join(', ')) + '</h3>' +
+          '<div style="color:var(--muted);font-size:13.5px;margin-top:4px">Placed ' + when.toLocaleDateString('en-IN', fmt) + ' · ' + Store.rupees(o.total) + '</div></div>' +
+          '<span class="pill ' + (st === 'cancelled' ? 'grey' : st === 'delivered' ? 'ok' : 'ok') + '">' + esc(st) + '</span>' +
+        '</div>' +
+        (st === 'cancelled' ? '<p style="margin-top:14px;color:var(--ink-2)">This order was cancelled. Any payment is refunded to the same method within 5 working days.</p>' :
+        '<div class="timeline" style="margin-top:22px">' +
+          list.map(function(s, i){
+            var cls = i < idx ? 'done' : i === idx ? 'now' : '';
+            return '<div class="tl ' + cls + '">' + esc(s.t) + '<small>' + esc(s.s) + '</small></div>';
+          }).join('') +
+        '</div>') +
+        '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px"><a class="btn btn-soft btn-sm" href="order.html?ref=' + encodeURIComponent(o.ref) + '">View receipt</a><a class="btn btn-soft btn-sm" href="account.html">All orders</a></div>' +
+      '</div>';
+  }
+
+  document.getElementById('trackForm').addEventListener('submit', function(e){
+    e.preventDefault();
+    var ref = document.getElementById('tRef').value.trim().toUpperCase();
+    var phone = document.getElementById('tPhone').value.replace(/\D/g, '');
+    var err = document.getElementById('tErr');
+    var o = Store.orderByRef(ref);
+    if (!o) { err.hidden = false; err.textContent = 'No order with that reference in this browser. Orders in the preview are stored where they were placed.'; document.getElementById('result').innerHTML = ''; return; }
+    var op = String(o.customer.phone || '').replace(/\D/g, '');
+    if (phone && op && op.slice(-10) !== phone.slice(-10)) { err.hidden = false; err.textContent = 'That mobile number does not match the order.'; document.getElementById('result').innerHTML = ''; return; }
+    err.hidden = true;
+    show(o);
+  });
+
+  var pre = new URLSearchParams(location.search).get('ref');
+  if (pre) { document.getElementById('tRef').value = pre; var o = Store.orderByRef(pre); if (o) show(o); }
+})();
+</script>
+</body>
+</html>

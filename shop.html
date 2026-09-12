@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Shop — A1 Opticals</title>
+<meta name="theme-color" content="#14181A">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="stylesheet" href="store.css">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%2314181A'/><text x='50' y='67' text-anchor='middle' font-family='Helvetica,Arial,sans-serif' font-size='48' font-weight='700' fill='%23FFFFFF'>A1</text></svg>">
+</head>
+<body data-page="shop.html">
+<div id="chrome-top"></div>
+
+<main id="main">
+  <div class="wrap">
+    <div class="page-head">
+      <div class="crumb" id="crumb"><a href="index.html">Home</a> / Shop</div>
+      <div class="title-row">
+        <div style="display:flex;align-items:baseline;flex-wrap:wrap">
+          <h1 id="shopTitle">Everything</h1>
+          <span class="count" id="count"></span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <button type="button" class="btn btn-soft btn-sm filter-toggle" id="filterToggle" aria-controls="filters" aria-expanded="false"><i class="fa-solid fa-sliders"></i> Filters</button>
+          <label class="mono" for="sort" style="white-space:nowrap">Sort</label>
+          <select class="sort" id="sort" aria-label="Sort products">
+            <option value="featured">Featured</option>
+            <option value="price-asc">Price, low to high</option>
+            <option value="price-desc">Price, high to low</option>
+            <option value="rating">Top rated</option>
+            <option value="newest">Newest</option>
+            <option value="name">Name, A–Z</option>
+          </select>
+        </div>
+      </div>
+      <div class="pills" id="pills" aria-live="polite"></div>
+    </div>
+
+    <div class="shop-layout">
+      <aside class="filters" id="filters" aria-label="Filters">
+        <div id="powerPanel"></div>
+        <div id="filterGroups"></div>
+        <button type="button" class="btn btn-primary btn-block filter-done" id="filterDone">Show results</button>
+      </aside>
+
+      <div class="results">
+        <div class="lens-banner" id="lensBanner" hidden></div>
+        <div class="note" id="powerNote" hidden></div>
+        <div class="grid grid-4" id="grid"></div>
+        <div class="empty" id="empty" hidden>
+          <h3>Nothing matches that</h3>
+          <p>Try a broader search, or clear a filter.</p>
+          <p style="margin-top:16px"><button class="btn btn-soft btn-sm" id="clearAll2">Clear everything</button></p>
+        </div>
+        <div class="load-more" id="loadMore" hidden>
+          <button type="button" class="btn btn-ghost" id="loadBtn">Load more</button>
+          <span id="loadCount"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div id="chrome-foot"></div>
+
+<script src="catalog.js"></script>
+<script src="site.js"></script>
+<script src="store.js"></script>
+<script src="chrome.js"></script>
+<script src="card.js"></script>
+<script>
+(function(){
+  'use strict';
+  var esc = window.escapeHtml;
+  var trade = Store.isTrade();
+  var PAGE = 24;
+
+  /* State lives in the URL, not in a variable. A filtered view can be shared,
+     bookmarked, sent on WhatsApp, and reached by the back button — which is
+     the difference between a catalogue and a toy. */
+  var KEYS = ['q','cat','sort','brand','material','shape','colour','gender','type','width','offer','min','max','stock','lens','power'];
+  function readState(){
+    var q = new URLSearchParams(location.search), s = {};
+    KEYS.forEach(function(k){ s[k] = q.get(k) || ''; });
+    s.cat = s.cat || 'all'; s.sort = s.sort || 'featured';
+    /* The saved power hides oversize frames by default; ?power=0 shows them. */
+    if (!s.power) s.power = Store.rxStrength(Store.getRx()) > 4 ? '1' : '';
+    return s;
+  }
+  function writeState(replace){
+    var q = new URLSearchParams();
+    KEYS.forEach(function(k){
+      if (!state[k]) return;
+      if (k === 'cat' && state[k] === 'all') return;
+      if (k === 'sort' && state[k] === 'featured') return;
+      if (k === 'power' && state[k] === '1' && Store.rxStrength(Store.getRx()) > 4) return;
+      q.set(k, state[k]);
+    });
+    var url = location.pathname + (q.toString() ? '?' + q : '');
+    history[replace ? 'replaceState' : 'pushState']({}, '', url);
+  }
+  var state = readState();
+  var shown = PAGE;
+
+  function listOf(k){ return state[k] ? state[k].split(',') : []; }
+  function toggle(k, v){
+    var l = listOf(k), i = l.indexOf(v);
+    if (i > -1) l.splice(i, 1); else l.push(v);
+    state[k] = l.join(',');
+  }
+
+  /* ── the price scale for the slider: min and max of what is on offer in
+     the current category, rounded to the nearest hundred rupees ── */
+  function priceOf(p){ return Store.tradePricing(p) ? p.price : Store.displayPrice(p, state.lens || null); }
+  function baseList(){
+    return CATALOG.products.filter(function(p){
+      var c = CATALOG.category(p.cat) || {};
+      if (state.cat === 'all') return !c.hidden;
+      return p.cat === state.cat;
+    });
+  }
+  function scale(){
+    var lo = Infinity, hi = 0;
+    baseList().forEach(function(p){ var v = priceOf(p); if (v < lo) lo = v; if (v > hi) hi = v; });
+    if (!isFinite(lo)) { lo = 0; hi = 100000; }
+    return { lo: Math.floor(lo / 10000) * 10000, hi: Math.ceil(hi / 10000) * 10000 };
+  }
+
+  /* ── filter groups, built from the data so a new brand or shape appears on
+     its own. Counts are computed against the current category only, so they
+     answer "how many if I tick this". */
+  var GROUPS = [
+    { key: 'shape',    label: 'Shape',       chips: true },
+    { key: 'width',    label: 'Frame width', fixed: CATALOG.widths, after: '<button type="button" class="linkish" id="measure" style="font-size:12.5px">Measure with your phone</button>' },
+    { key: 'brand',    label: 'Brand',       collapse: 5 },
+    { key: 'material', label: 'Material' },
+    { key: 'colour',   label: 'Colour',      swatch: true },
+    { key: 'gender',   label: 'For' },
+    { key: 'type',     label: 'Type' }
+  ];
+  var OFFERS = [
+    { id: 'bogo',  label: function(){ var r = Store.bogoRule(); return r ? r.label : ''; }, on: function(){ return !!Store.bogoRule() && !trade; } },
+    { id: 'under', label: function(){ return 'Under ' + Store.rupees(SITE.get('offers').underPrice); }, on: function(){ return !trade; } },
+    { id: 'new',   label: function(){ return 'New this month'; }, on: function(){ return true; } }
+  ];
+
+  function buildFilters(){
+    var base = baseList();
+    var html = '';
+
+    var closed = {};
+    try { closed = JSON.parse(localStorage.getItem('a1opticals_filters_closed') || '{}'); } catch(e){}
+    function group(key, label, body, count, chips){
+      var isClosed = !!closed[key];
+      return '<div class="fgroup' + (isClosed ? ' closed' : '') + '" data-g="' + key + '">' +
+        '<button type="button" class="fgroup-h" aria-expanded="' + !isClosed + '">' + label +
+          (count ? '<b class="fcount">' + count + '</b>' : '') + '<i class="fa-solid fa-chevron-down"></i></button>' +
+        '<div class="fgroup-b' + (chips ? ' chips' : '') + '">' + body + '</div></div>';
+    }
+    function countFor(g, v){
+      return CATALOG.models(base.filter(function(p){
+        var a = g === 'brand' ? p.brand : g === 'colour' ? (p.colour && p.colour.id) : g === 'width' ? CATALOG.widthBand(p) : (p.attrs || {})[g];
+        return a === v;
+      })).length;
+    }
+
+    // category
+    var cats = CATALOG.categories.filter(function(c){ return !c.hidden && (!c.trade || trade || state.cat === c.id); });
+    html += group('cat', trade ? 'Category' : 'Category',
+      cats.map(function(c){
+        var n = c.id === 'all'
+          ? CATALOG.models(CATALOG.products.filter(function(p){ var k = CATALOG.category(p.cat) || {}; return !k.hidden; })).length
+          : CATALOG.models(CATALOG.products.filter(function(p){ return p.cat === c.id; })).length;
+        return '<label class="fopt"><input type="radio" name="cat" value="' + c.id + '"' + (state.cat === c.id ? ' checked' : '') + '><span>' + esc(c.label) + '</span><em>' + n + '</em></label>';
+      }).join('') +
+      (!trade ? '<a class="fopt" href="trade.html" style="color:var(--teal);font-weight:600;font-size:13px">Ophthalmic lenses &amp; instruments · trade →</a>' : ''), 0);
+
+    // price
+    var sc = scale();
+    var curMin = state.min ? Math.max(sc.lo, parseInt(state.min, 10)) : sc.lo;
+    var curMax = state.max ? Math.min(sc.hi, parseInt(state.max, 10)) : sc.hi;
+    var lp = Store.lensOf(CATALOG.products[0], state.lens || null);
+    html += group('price', trade ? 'Trade price' : 'Total price, lenses in',
+      '<div class="range">' +
+        '<div class="range-track"></div><div class="range-fill" id="rangeFill"></div>' +
+        '<input type="range" id="rMin" min="' + sc.lo + '" max="' + sc.hi + '" step="10000" value="' + curMin + '" aria-label="Minimum price">' +
+        '<input type="range" id="rMax" min="' + sc.lo + '" max="' + sc.hi + '" step="10000" value="' + curMax + '" aria-label="Maximum price">' +
+      '</div>' +
+      '<div class="range-vals"><span id="rMinV">' + Store.rupees(curMin) + '</span><span id="rMaxV">' + Store.rupees(curMax) + '</span></div>',
+      (state.min || state.max) ? 1 : 0);
+
+    GROUPS.forEach(function(g){
+      var vals = g.fixed ? g.fixed.map(function(w){ return w.id; }) : CATALOG.facet(base, g.key);
+      vals = vals.filter(function(v){ return g.fixed ? countFor(g.key, v) > 0 : true; });
+      if (vals.length < 2) return;
+      var chosen = listOf(g.key);
+      var body;
+      if (g.chips) {
+        body = vals.map(function(v){
+          return '<button type="button" class="fchip' + (chosen.indexOf(v) > -1 ? ' on' : '') + '" data-k="' + g.key + '" data-v="' + esc(v) + '">' + esc(v) + '</button>';
+        }).join('');
+      } else {
+        var rows = vals.map(function(v, i){
+          var n = countFor(g.key, v);
+          var label = g.key === 'colour' ? (CATALOG.families[v] || v) : g.fixed ? g.fixed.filter(function(w){ return w.id === v; })[0].label : v;
+          var dot = g.swatch ? '<i class="fdot" style="--sw:' + esc(CATALOG.swatches[v] || '#999') + '"></i>' : '';
+          var hide = g.collapse && i >= g.collapse && chosen.indexOf(v) === -1 ? ' data-more hidden' : '';
+          return '<label class="fopt"' + hide + '><input type="checkbox" data-k="' + g.key + '" value="' + esc(v) + '"' + (chosen.indexOf(v) > -1 ? ' checked' : '') + '>' + dot + '<span>' + esc(label) + '</span><em>' + n + '</em></label>';
+        });
+        body = rows.join('') +
+          (g.collapse && vals.length > g.collapse ? '<button type="button" class="linkish" data-showall style="font-size:13px;text-align:left">Show all ' + vals.length + ' ' + g.label.toLowerCase() + 's</button>' : '') +
+          (g.after || '');
+      }
+      html += group(g.key, g.label, body, chosen.length, g.chips);
+    });
+
+    // offers
+    var offers = OFFERS.filter(function(o){ return o.on(); });
+    var chosenOffers = listOf('offer');
+    html += group('offer', 'Offer',
+      offers.map(function(o){
+        var n = Store.search({ cat: state.cat, offer: o.id, group: true, lens: state.lens }).length;
+        return '<label class="fopt"><input type="checkbox" data-k="offer" value="' + o.id + '"' + (chosenOffers.indexOf(o.id) > -1 ? ' checked' : '') + '><span>' + esc(o.label()) + '</span><em>' + n + '</em></label>';
+      }).join(''), chosenOffers.length);
+
+    // availability
+    html += group('stock', 'Availability',
+      '<label class="fopt"><input type="checkbox" id="fStock"' + (state.stock ? ' checked' : '') + '><span>In stock only</span></label>', state.stock ? 1 : 0);
+
+    var host = document.getElementById('filterGroups');
+    host.innerHTML = html;
+
+    host.querySelectorAll('.fgroup-h').forEach(function(b){
+      b.addEventListener('click', function(){
+        var g = b.closest('.fgroup'), key = g.getAttribute('data-g');
+        g.classList.toggle('closed');
+        b.setAttribute('aria-expanded', String(!g.classList.contains('closed')));
+        closed[key] = g.classList.contains('closed');
+        try { localStorage.setItem('a1opticals_filters_closed', JSON.stringify(closed)); } catch(e){}
+      });
+    });
+    host.querySelectorAll('input[name=cat]').forEach(function(r){
+      r.addEventListener('change', function(){
+        state.cat = r.value;
+        // attribute filters that made sense for frames rarely do for lenses
+        ['material','shape','colour','gender','type','width','min','max'].forEach(function(k){ state[k] = ''; });
+        writeState(); render(true);
+      });
+    });
+    host.querySelectorAll('input[data-k]').forEach(function(c){
+      c.addEventListener('change', function(){ toggle(c.getAttribute('data-k'), c.value); writeState(); render(); });
+    });
+    host.querySelectorAll('.fchip[data-k]').forEach(function(c){
+      c.addEventListener('click', function(){ toggle(c.getAttribute('data-k'), c.getAttribute('data-v')); writeState(); render(); });
+    });
+    host.querySelectorAll('[data-showall]').forEach(function(b){
+      b.addEventListener('click', function(){ b.closest('.fgroup-b').querySelectorAll('[data-more]').forEach(function(l){ l.hidden = false; }); b.remove(); });
+    });
+    document.getElementById('fStock').addEventListener('change', function(e){ state.stock = e.target.checked ? '1' : ''; writeState(); render(); });
+
+    // price slider — two thumbs, applied when released so the grid does not
+    // repaint on every pixel
+    var rMin = document.getElementById('rMin'), rMax = document.getElementById('rMax'), fill = document.getElementById('rangeFill');
+    function paintRange(){
+      var a = +rMin.value, b = +rMax.value;
+      if (a > b) { var t = a; a = b; b = t; }
+      var span = (sc.hi - sc.lo) || 1;
+      fill.style.left = ((a - sc.lo) / span * 100) + '%';
+      fill.style.right = (100 - (b - sc.lo) / span * 100) + '%';
+      document.getElementById('rMinV').textContent = Store.rupees(a);
+      document.getElementById('rMaxV').textContent = Store.rupees(b);
+    }
+    function applyRange(){
+      var a = Math.min(+rMin.value, +rMax.value), b = Math.max(+rMin.value, +rMax.value);
+      state.min = a > sc.lo ? String(a) : ''; state.max = b < sc.hi ? String(b) : '';
+      writeState(); render(false);
+    }
+    [rMin, rMax].forEach(function(r){ r.addEventListener('input', paintRange); r.addEventListener('change', applyRange); });
+    paintRange();
+
+    var m = document.getElementById('measure');
+    if (m) m.addEventListener('click', measureGuide);
+  }
+
+  /* ── "Know your power?" — the saved prescription drives the lens advice and
+     hides frames too wide for a strong power. ── */
+  function powerPanel(){
+    var host = document.getElementById('powerPanel');
+    if (trade) { host.innerHTML = ''; return; }
+    var rx = Store.getRx();
+    if (rx && rx.method === 'typed') {
+      var strong = Store.rxStrength(rx) > 4;
+      host.innerHTML = '<div class="power-panel">' +
+        '<b>Your power is saved</b>' +
+        '<span>' + esc(Store.rxSummary(rx)) + '</span>' +
+        (strong
+          ? '<label class="check"><input type="checkbox" id="powerHide"' + (state.power === '1' ? ' checked' : '') + '><span>Hide frames too wide for this power</span></label>'
+          : '<span style="color:var(--teal);font-weight:600">Standard lenses suit every frame here.</span>') +
+        '<div style="display:flex;gap:12px"><button type="button" class="linkish" id="rxEdit" style="font-size:13px">Edit</button><button type="button" class="linkish" id="rxClear" style="font-size:13px;color:var(--muted)">Remove</button></div>' +
+      '</div>';
+      document.getElementById('rxEdit').addEventListener('click', function(){ rxModal(); });
+      document.getElementById('rxClear').addEventListener('click', function(){ Store.clearRx(); state.power = ''; writeState(true); render(true); });
+      var ph = document.getElementById('powerHide');
+      if (ph) ph.addEventListener('change', function(){ state.power = ph.checked ? '1' : '0'; writeState(true); render(false); });
+    } else {
+      host.innerHTML = '<div class="power-panel">' +
+        '<b>Know your power?</b>' +
+        '<span>Enter it and we’ll hide frames too wide for your lens thickness, and tell you which lens you need.</span>' +
+        '<button type="button" class="btn btn-primary" id="rxAdd">Add my prescription</button>' +
+      '</div>';
+      document.getElementById('rxAdd').addEventListener('click', function(){ rxModal(); });
+    }
+  }
+
+  function rxModal(){
+    var rx = Store.getRx() || { od: {}, os: {}, pd: {} };
+    var m = window.modal(
+      '<h2>Your prescription</h2>' +
+      '<p>Copy it from your last eye test. SPH is the main number; CYL and AXIS only if they appear.</p>' +
+      '<div class="rx-table">' +
+        '<span></span><span class="h">SPH</span><span class="h">CYL</span><span class="h">AXIS</span><span class="h">ADD</span>' +
+        '<span class="eye">Right</span><input id="odS" inputmode="decimal" placeholder="−2.25" value="' + esc(rx.od.sph || '') + '"><input id="odC" inputmode="decimal" placeholder="−0.50" value="' + esc(rx.od.cyl || '') + '"><input id="odA" inputmode="numeric" placeholder="180" value="' + esc(rx.od.axis || '') + '"><input id="odD" inputmode="decimal" placeholder="—" value="' + esc(rx.od.add || '') + '">' +
+        '<span class="eye">Left</span><input id="osS" inputmode="decimal" placeholder="−1.75" value="' + esc(rx.os.sph || '') + '"><input id="osC" inputmode="decimal" placeholder="−0.25" value="' + esc(rx.os.cyl || '') + '"><input id="osA" inputmode="numeric" placeholder="175" value="' + esc(rx.os.axis || '') + '"><input id="osD" inputmode="decimal" placeholder="—" value="' + esc(rx.os.add || '') + '">' +
+      '</div>' +
+      '<p class="err" id="rxErr" hidden style="color:#B3261E"></p>' +
+      '<div class="actions"><button type="button" class="btn btn-primary" id="rxSave">Save power</button><button type="button" class="btn btn-soft" data-close>Cancel</button></div>'
+    );
+    m.querySelector('#rxSave').addEventListener('click', function(){
+      var g = function(id){ return m.querySelector('#' + id).value.trim().replace(/−/g, '-'); };
+      if (g('odS') === '' || g('osS') === '' || isNaN(parseFloat(g('odS'))) || isNaN(parseFloat(g('osS')))) {
+        var e = m.querySelector('#rxErr'); e.hidden = false; e.textContent = 'SPH for both eyes, please — 0.00 if there is none.'; return;
+      }
+      Store.setRx({ method: 'typed', od: { sph: g('odS'), cyl: g('odC'), axis: g('odA'), add: g('odD') }, os: { sph: g('osS'), cyl: g('osC'), axis: g('osA'), add: g('osD') }, pd: rx.pd || {} });
+      window.closeModal();
+      state.power = Store.rxStrength(Store.getRx()) > 4 ? '1' : '';
+      writeState(true); render(true);
+      window.toast('Power saved — it will be applied at checkout');
+    });
+  }
+
+  function measureGuide(){
+    window.modal(
+      '<h2>Measure with your phone</h2>' +
+      '<p>Every frame has its size stamped inside the temple arm, like <span class="tnum" style="font-family:var(--f-mono)">51 □ 19 – 142</span>: lens width, bridge, temple length. If you have a pair that fits, read those three numbers off it and match the lens width within 2 mm.</p>' +
+      '<p>No pair to hand? Hold a card against your face at the temples and photograph it straight on. A standard credit card is 85.6 mm wide — if your face is about one and a half cards across the temples (128–132 mm), you are a medium.</p>' +
+      '<div class="guide">' +
+        '<div><div><b>Narrow</b><span>Under 130 mm across · lens width 44–49</span></div></div>' +
+        '<div><div><b>Medium</b><span>130–139 mm · lens width 50–53 · most adults</span></div></div>' +
+        '<div><div><b>Wide</b><span>140 mm and up · lens width 54–58</span></div></div>' +
+      '</div>' +
+      '<div class="actions"><button type="button" class="btn btn-primary" data-close>Got it</button></div>'
+    );
+  }
+
+  function pills(){
+    var out = [];
+    GROUPS.forEach(function(g){
+      listOf(g.key).forEach(function(v){
+        out.push({ k: g.key, v: v, label: g.key === 'colour' ? (CATALOG.families[v] || v) : v });
+      });
+    });
+    listOf('offer').forEach(function(v){ var o = OFFERS.filter(function(x){ return x.id === v; })[0]; out.push({ k: 'offer', v: v, label: o ? o.label() : v }); });
+    if (state.min || state.max) out.push({ k: 'price', v: '', label: (state.min ? Store.rupees(+state.min) : 'Any') + ' – ' + (state.max ? Store.rupees(+state.max) : 'any') });
+    if (state.stock) out.push({ k: 'stock', v: '', label: 'In stock' });
+    if (state.q) out.push({ k: 'q', v: '', label: '“' + state.q + '”' });
+    var host = document.getElementById('pills');
+    host.innerHTML = out.map(function(p){
+      return '<button type="button" class="pill-x" data-k="' + p.k + '" data-v="' + esc(p.v) + '">' + esc(p.label) + ' <i class="fa-solid fa-xmark"></i></button>';
+    }).join('') + (out.length ? '<button type="button" class="pill-clear" id="clearAll">Clear all</button>' : '');
+    host.querySelectorAll('.pill-x').forEach(function(b){
+      b.addEventListener('click', function(){
+        var k = b.getAttribute('data-k'), v = b.getAttribute('data-v');
+        if (k === 'price') { state.min = ''; state.max = ''; }
+        else if (k === 'stock' || k === 'q') { state[k] = ''; if (k === 'q') { var hs = document.getElementById('headSearch'); if (hs) hs.value = ''; } }
+        else toggle(k, v);
+        writeState(); render(true);
+      });
+    });
+    var ca = document.getElementById('clearAll');
+    if (ca) ca.addEventListener('click', clearAll);
+  }
+
+  var sortSel = document.getElementById('sort');
+  sortSel.value = state.sort;
+  sortSel.addEventListener('change', function(){ state.sort = sortSel.value; writeState(); render(false); });
+
+  function clearAll(){
+    var cat = state.cat;
+    KEYS.forEach(function(k){ state[k] = ''; }); state.cat = cat; state.sort = 'featured';
+    var hs = document.getElementById('headSearch'); if (hs) hs.value = '';
+    writeState(); render(true);
+  }
+  document.getElementById('clearAll2').addEventListener('click', clearAll);
+
+  // mobile drawer
+  var ft = document.getElementById('filterToggle');
+  function openFilters(open){
+    document.getElementById('filters').classList.toggle('open', open);
+    ft.setAttribute('aria-expanded', String(open));
+    document.body.classList.toggle('filters-open', open);
+  }
+  ft.addEventListener('click', function(){ openFilters(!document.getElementById('filters').classList.contains('open')); });
+  document.getElementById('filterDone').addEventListener('click', function(){ openFilters(false); });
+
+  // load more
+  document.getElementById('loadBtn').addEventListener('click', function(){ shown += PAGE; render(false, true); });
+
+  window.addEventListener('popstate', function(){ state = readState(); shown = PAGE; render(true); });
+
+  /* ── the lens-package banner: prices on every tile follow the package
+     chosen here, so "what would these cost with blue-cut" is one click. ── */
+  function lensBanner(){
+    var b = document.getElementById('lensBanner');
+    var c = CATALOG.category(state.cat) || {};
+    var show = !trade && (state.cat === 'all' || c.lens === true);
+    b.hidden = !show;
+    if (!show) return;
+    var cur = SITE.lens(state.lens) || SITE.includedLens();
+    b.innerHTML = '<span>Showing prices with <b>' + esc(cur.label.toLowerCase()) + '</b> lenses included.</span>' +
+      '<label style="display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:600;color:var(--ink)">Change lens package ' +
+      '<select id="lensSel">' + SITE.lensPackages().map(function(l){
+        return '<option value="' + esc(l.id) + '"' + (l.id === cur.id ? ' selected' : '') + '>' + esc(l.label) + (l.included ? ' · included' : '') + '</option>';
+      }).join('') + '</select></label>';
+    document.getElementById('lensSel').addEventListener('change', function(e){
+      state.lens = e.target.value === SITE.includedLens().id ? '' : e.target.value;
+      writeState(true); render(true);
+    });
+  }
+
+  function render(rebuild, append){
+    if (rebuild !== false) { buildFilters(); powerPanel(); lensBanner(); }
+    if (!append) shown = Math.max(PAGE, Math.min(shown, PAGE));
+    sortSel.value = state.sort;
+
+    var cat = CATALOG.category(state.cat);
+    var title = state.q ? '“' + state.q + '”' : (cat && cat.id !== 'all' ? cat.label : 'Everything');
+    if (state.gender && !state.q && cat && cat.id !== 'all' && listOf('gender').length === 1) title = state.gender + '’s ' + cat.label.toLowerCase();
+    document.getElementById('shopTitle').textContent = title;
+    document.title = title + ' — A1 Opticals';
+    document.getElementById('crumb').innerHTML = '<a href="index.html">Home</a> / <a href="shop.html">Shop</a>' + (cat && cat.id !== 'all' ? ' / ' + esc(cat.label) : '') + (state.q ? ' / Search' : '');
+
+    var results = Store.search({
+      q: state.q, cat: state.cat, sort: state.sort, group: true, lens: state.lens || null,
+      brand: state.brand, material: state.material, shape: state.shape, colour: state.colour,
+      gender: state.gender, type: state.type, width: state.width, offer: state.offer,
+      minPrice: state.min ? parseInt(state.min, 10) : 0,
+      maxPrice: state.max ? parseInt(state.max, 10) : Infinity,
+      inStock: !!state.stock, power: state.power === '1'
+    });
+    var grid = document.getElementById('grid');
+    var empty = document.getElementById('empty');
+
+    var page = results.slice(0, shown);
+    grid.innerHTML = page.map(function(p){ return window.cardHtml(p, { lens: state.lens || null }); }).join('');
+    grid.hidden = results.length === 0;
+    empty.hidden = results.length !== 0;
+
+    var lm = document.getElementById('loadMore');
+    lm.hidden = results.length <= shown;
+    document.getElementById('loadBtn').textContent = 'Load ' + Math.min(PAGE, results.length - shown) + ' more';
+    document.getElementById('loadCount').textContent = 'Showing ' + page.length + ' of ' + results.length;
+
+    var pn = document.getElementById('powerNote');
+    if (results.hiddenForPower) {
+      pn.hidden = false;
+      pn.innerHTML = '<i class="fa-solid fa-circle-info"></i><div>' + results.hiddenForPower + ' wide frame' + (results.hiddenForPower === 1 ? '' : 's') + ' hidden because a power above ±4.00 gets thick at the edge in them. <button type="button" class="linkish" id="showAnyway">Show anyway</button></div>';
+      document.getElementById('showAnyway').addEventListener('click', function(){ state.power = '0'; writeState(true); render(true); });
+    } else pn.hidden = true;
+
+    var skus = results.reduce(function(n, p){ return n + CATALOG.siblings(p).length; }, 0);
+    document.getElementById('count').textContent = results.length + ' ' + (results.length === 1 ? 'frame' : 'frames') + (trade ? ' · ' + skus + ' SKUs' : '');
+    pills();
+    var n = document.querySelectorAll('#pills .pill-x').length;
+    ft.innerHTML = '<i class="fa-solid fa-sliders"></i> Filters' + (n ? ' <b class="fcount">' + n + '</b>' : '');
+  }
+
+  /* The header search is shared chrome, so wire it to filter in place here
+     rather than reloading the page onto itself. */
+  document.addEventListener('DOMContentLoaded', function(){
+    ['headSearch', 'headSearchM'].forEach(function(id){
+      var hs = document.getElementById(id);
+      if (!hs) return;
+      hs.value = state.q;
+      var t;
+      hs.addEventListener('input', function(){
+        clearTimeout(t);
+        t = setTimeout(function(){ state.q = hs.value.trim(); writeState(true); render(false); }, 180);
+      });
+    });
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>

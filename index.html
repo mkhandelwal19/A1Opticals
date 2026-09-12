@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- Client preview. Must not be indexed. -->
+<meta name="robots" content="noindex, nofollow">
+<title>A1 Opticals — Glasses from ₹999, lenses included</title>
+<meta name="description" content="A1 Opticals, Chandigarh. Eyeglasses, sunglasses, contact lenses and reading glasses with lenses included in the price. Free eye test in store. Trade supply for opticians.">
+<meta name="theme-color" content="#14181A">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="stylesheet" href="store.css">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%2314181A'/><text x='50' y='67' text-anchor='middle' font-family='Helvetica,Arial,sans-serif' font-size='48' font-weight='700' fill='%23FFFFFF'>A1</text></svg>">
+</head>
+<body data-page="index.html">
+<div id="chrome-top"></div>
+
+<main id="main">
+
+  <section class="hero">
+    <div class="wrap" style="padding:0">
+      <div class="hero-grid">
+        <div class="hero-copy">
+          <span class="kicker" id="heroKicker"></span>
+          <h1 id="heroTitle"></h1>
+          <p id="heroText"></p>
+          <div class="hero-ctas">
+            <a class="btn btn-primary" id="heroCta1" href="shop.html?cat=frames"></a>
+            <a class="btn btn-ghost" id="heroCta2" href="shop.html?cat=sun"></a>
+          </div>
+        </div>
+        <div class="hero-art" id="heroArt">
+          <img id="heroImg" alt="" loading="eager" decoding="async" fetchpriority="high">
+          <div class="hero-sw" id="heroSw" aria-label="Colours"></div>
+          <div class="spec-chips" id="heroChips"></div>
+          <a class="hero-price" id="heroPrice" href="#"></a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="wrap" style="padding:0"><div class="trust" id="trust"></div></div>
+
+  <section class="section" id="ranges">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>Shop by category</h2>
+        <a class="more" href="shop.html">Everything →</a>
+      </div>
+      <div class="tiles" id="catTiles"></div>
+    </div>
+  </section>
+
+  <section class="section tight" id="shapes">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>Shop by shape</h2>
+        <a class="more" href="shop.html?cat=frames">All eyeglasses →</a>
+      </div>
+      <div class="shapes" id="shapeTiles"></div>
+    </div>
+  </section>
+
+  <section class="section tight" id="best">
+    <div class="wrap">
+      <div class="section-head">
+        <div>
+          <h2 id="bestTitle">Bestsellers this month</h2>
+          <span class="sub" id="bestSub"></span>
+        </div>
+        <div class="tabs tabs-inline" role="tablist" id="bestTabs"></div>
+      </div>
+      <div class="grid" id="featured"></div>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="wrap"><div class="promos" id="promos"></div></div>
+  </section>
+
+  <section class="section" id="brands">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>Shop by brand</h2>
+        <a class="more" href="brands.html">All brands →</a>
+      </div>
+      <div class="brand-tiles" id="brandTiles"></div>
+    </div>
+  </section>
+
+  <section class="section tight" id="tradeStrip" hidden>
+    <div class="wrap">
+      <div class="trade-strip">
+        <div>
+          <div class="mono">For opticians, clinics and hospitals</div>
+          <h3>Trade supply from the same counter</h3>
+          <p>Frames, stock lenses, contact lenses and instruments at trade price with volume tiers, a GST invoice in your name, same-day dispatch in the Tricity and a quick order pad that takes a pasted stock sheet.</p>
+        </div>
+        <a class="btn btn-ink" href="trade.html">Open a trade account</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="section tight" id="visit">
+    <div class="wrap">
+      <div class="visit" id="visitBox"></div>
+    </div>
+  </section>
+
+</main>
+
+<div id="chrome-foot"></div>
+
+<script src="catalog.js"></script>
+<script src="site.js"></script>
+<script src="store.js"></script>
+<script src="chrome.js"></script>
+<script src="card.js"></script>
+<script>
+(function(){
+  'use strict';
+  var esc = window.escapeHtml;
+  var trade = Store.isTrade();
+
+  /* ── hero ── the copy is owner-editable; the picture is either an uploaded
+     photograph or the featured frame's render with its colourways live. In
+     trade mode the hero speaks to the counter instead. */
+  var hero = SITE.get('hero');
+  if (trade) {
+    hero = { kicker: 'Trade account', title: 'Stock your counter\nfrom one order pad.',
+      text: 'Frames, ophthalmic lenses, contact lenses and instruments at trade price, with a GST invoice in your name on every order. Priced by quantity, so what you see on the tile is what lands on the invoice.',
+      cta1: { label: 'Browse the catalogue', href: 'shop.html' }, cta2: { label: 'Quick order pad', href: 'trade.html#quick' }, photo: '', sku: hero.sku };
+  }
+  document.getElementById('heroKicker').textContent = hero.kicker;
+  document.getElementById('heroTitle').textContent = hero.title;
+  document.getElementById('heroText').textContent = hero.text;
+  var c1 = document.getElementById('heroCta1'), c2 = document.getElementById('heroCta2');
+  c1.textContent = hero.cta1.label; c1.href = hero.cta1.href;
+  c2.textContent = hero.cta2.label; c2.href = hero.cta2.href;
+
+  var heroImg = document.getElementById('heroImg');
+  var feat = CATALOG.bySku(hero.sku) || CATALOG.products[0];
+  if (hero.photo) {
+    heroImg.src = hero.photo; heroImg.alt = 'A1 Opticals';
+    document.getElementById('heroSw').hidden = true;
+    document.getElementById('heroChips').hidden = true;
+    document.getElementById('heroPrice').hidden = true;
+  } else {
+    function setHero(p){
+      heroImg.src = CATALOG.img(p.photo);
+      heroImg.alt = p.name + (p.colour ? ', ' + p.colour.label : '');
+      var chips = [];
+      if (CATALOG.sizeLabel(p)) chips.push(CATALOG.sizeLabel(p));
+      if (p.attrs && p.attrs.material) chips.push(p.attrs.material + (p.weight ? ' · ' + p.weight + ' g' : ''));
+      chips.push(p.sku);
+      document.getElementById('heroChips').innerHTML = chips.map(function(c){ return '<span>' + esc(c) + '</span>'; }).join('');
+      var hp = document.getElementById('heroPrice');
+      hp.href = 'product.html?sku=' + encodeURIComponent(p.sku);
+      hp.innerHTML = trade
+        ? '<b>' + Store.rupees(p.price) + '<small style="font-size:12px;font-weight:400"> /' + esc(p.unit) + '</small></b><span>' + esc(p.name) + ' · trade, MOQ ' + p.moq + '</span>'
+        : '<b>' + Store.rupees(Store.displayPrice(p)) + '</b><span>' + esc(p.name) + ' · lenses included</span>';
+      document.querySelectorAll('#heroSw .sw').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-hero') === p.sku); });
+    }
+    document.getElementById('heroSw').innerHTML = CATALOG.siblings(feat).map(function(s){
+      return '<button type="button" class="sw" data-hero="' + esc(s.sku) + '" style="--sw:' + esc(s.colour.hex) + '" aria-label="' + esc(s.colour.label) + '"></button>';
+    }).join('');
+    document.getElementById('heroSw').addEventListener('click', function(e){
+      var b = e.target.closest('[data-hero]'); if (!b) return;
+      setHero(CATALOG.bySku(b.getAttribute('data-hero')));
+    });
+    setHero(feat);
+  }
+
+  /* ── trust strip ── */
+  var trust = SITE.get('trust');
+  var trustEl = document.getElementById('trust');
+  if (trust.on && trust.items.length && !trade) {
+    trustEl.innerHTML = trust.items.map(function(t){ return '<div><b>' + esc(t.title) + '</b><span>' + esc(t.sub) + '</span></div>'; }).join('');
+  } else if (trade) {
+    trustEl.innerHTML = [
+      ['GST invoice in your name', 'Input credit on every order'],
+      ['Same-day dispatch', 'Stock orders before 2 pm'],
+      ['Own van in the Tricity', Store.areaNames().slice(0, 3).join(' · ')],
+      ['12-month warranty', 'Frames and instruments']
+    ].map(function(t){ return '<div><b>' + esc(t[0]) + '</b><span>' + esc(t[1]) + '</span></div>'; }).join('');
+  } else trustEl.hidden = true;
+
+  /* ── category tiles: the shop's categories with a live "from" price, plus a
+     designer-brands tile. Trade sees lenses and instruments as well. */
+  var cats = CATALOG.categories.filter(function(c){ return c.nav || (trade && c.trade); });
+  var brandCount = CATALOG.facet(CATALOG.products, 'brand').filter(function(b){ return !/^A1 |Stock lens|Rx lab|Instruments/.test(b); }).length;
+  document.getElementById('catTiles').innerHTML = cats.map(function(c){
+    var from = trade
+      ? CATALOG.products.filter(function(p){ return p.cat === c.id; }).reduce(function(m, p){ return !m || p.price < m ? p.price : m; }, 0)
+      : Store.fromPrice(c.id);
+    return '<a class="tile" href="shop.html?cat=' + c.id + '">' +
+      '<img src="' + CATALOG.img(c.photo) + '" alt="" loading="lazy">' +
+      '<div class="tile-body"><b>' + esc(c.label) + '</b><span>From ' + Store.rupees(from) + (trade ? ' trade' : '') + '</span></div></a>';
+  }).join('') +
+  '<a class="tile" href="brands.html">' +
+    '<img src="' + CATALOG.img('frame:browline:metal:gold:tortoise') + '" alt="" loading="lazy">' +
+    '<div class="tile-body"><b>Designer brands</b><span>Ray-Ban, Vogue +' + Math.max(0, brandCount - 2) + '</span></div></a>';
+
+  /* ── shape tiles ── */
+  document.getElementById('shapeTiles').innerHTML = CATALOG.shapes.map(function(s){
+    return '<a class="shape" href="shop.html?cat=frames&shape=' + encodeURIComponent(s.id) + '">' +
+      '<img src="' + CATALOG.img(s.photo) + '" alt="" loading="lazy"><span>' + esc(s.id) + '</span></a>';
+  }).join('');
+
+  /* ── bestsellers, tabbed. The first tab is the owner's pick list from the
+     admin page; the others are the top-rated in each category. */
+  var best = SITE.get('bestsellers');
+  document.getElementById('bestTitle').textContent = trade ? 'Counter staples' : best.title;
+  document.getElementById('bestSub').textContent = trade ? 'The frames and stock lenses a counter reorders every month' : best.sub;
+  var tabs = [{ id: 'picks', label: trade ? 'Reorder SKUs' : 'Picks' }];
+  cats.forEach(function(c){ tabs.push({ id: c.id, label: c.short || c.label }); });
+  function listFor(t){
+    if (t === 'picks') {
+      var picks = best.skus.map(CATALOG.bySku).filter(Boolean);
+      if (trade) picks = ['A1-FR-2102','A1-FR-2105','A1-FR-3201','A1-LN-5101','A1-LN-5102','A1-CL-6101','A1-IN-7101','A1-FR-2101'].map(CATALOG.bySku).filter(Boolean);
+      return picks.length ? picks : CATALOG.models().slice(0, 5);
+    }
+    return CATALOG.models(CATALOG.products.filter(function(p){ return p.cat === t && p.stock > 0; }))
+      .sort(function(a, b){ return (b.rating || 0) - (a.rating || 0); }).slice(0, 5);
+  }
+  document.getElementById('bestTabs').innerHTML = tabs.map(function(t, i){
+    return '<button class="tab" role="tab" aria-selected="' + (i === 0) + '" data-t="' + t.id + '">' + esc(t.label) + '</button>';
+  }).join('');
+  function paintBest(t){
+    document.getElementById('featured').innerHTML = listFor(t).map(function(p){ return window.cardHtml(p); }).join('');
+  }
+  document.querySelectorAll('#bestTabs .tab').forEach(function(b){
+    b.addEventListener('click', function(){
+      document.querySelectorAll('#bestTabs .tab').forEach(function(o){ o.setAttribute('aria-selected', String(o === b)); });
+      paintBest(b.getAttribute('data-t'));
+    });
+  });
+  paintBest('picks');
+
+  /* ── promos ── */
+  document.getElementById('promos').innerHTML = SITE.get('promos').map(function(p){
+    return '<div class="promo' + (p.dark ? ' dark' : '') + '">' +
+      '<span class="mono">' + esc(p.kicker) + '</span>' +
+      '<h3>' + esc(p.title) + '</h3>' +
+      '<p>' + esc(p.text) + '</p>' +
+      '<a class="more" href="' + esc(p.href) + '">' + esc(p.cta) + '</a>' +
+    '</div>';
+  }).join('');
+
+  /* ── brands: the ones with stock in the catalogue, designer first ── */
+  var brands = CATALOG.facet(CATALOG.products.filter(function(p){ var c = CATALOG.category(p.cat); return c && !c.trade && !c.hidden; }), 'brand');
+  var designer = brands.filter(function(b){ return !/^A1 /.test(b); }), house = brands.filter(function(b){ return /^A1 /.test(b); });
+  document.getElementById('brandTiles').innerHTML = designer.concat(house).slice(0, 7).map(function(b){
+    return '<a class="brand-tile" href="shop.html?brand=' + encodeURIComponent(b) + '">' + esc(b) + '</a>';
+  }).join('') + '<a class="brand-tile all" href="brands.html">All ' + brands.length + ' brands</a>';
+
+  /* ── trade strip ── */
+  if (SITE.get('display').tradeStrip && !trade) document.getElementById('tradeStrip').hidden = false;
+
+  /* ── visit: the first store, with the map ── */
+  var store = SITE.stores()[0], contact = SITE.get('contact');
+  if (store) {
+    document.getElementById('visitBox').innerHTML =
+      '<div class="visit-copy">' +
+        '<div class="mono">Visit the store</div>' +
+        '<h2>' + esc(store.address.split(',')[0]) + ', ' + esc(store.name) + '</h2>' +
+        '<p style="color:var(--ink-2)">' + esc(store.address) + '. ' + esc(store.hours) + '. Free eye tests, repairs and adjustments, and a trade counter for opticians.</p>' +
+        '<ul class="visit-list">' +
+          '<li><i class="fa-solid fa-phone"></i><a href="' + esc(contact.phoneHref) + '">' + esc(contact.phone) + '</a></li>' +
+          '<li><i class="fa-brands fa-whatsapp"></i><a href="' + esc(contact.whatsapp) + '" target="_blank" rel="noopener">WhatsApp the store</a></li>' +
+          '<li><i class="fa-solid fa-envelope"></i><a href="mailto:' + esc(contact.email) + '">' + esc(contact.email) + '</a></li>' +
+          '<li><i class="fa-solid fa-truck"></i><span>Own-van delivery: ' + esc(Store.areaNames().join(', ')) + (trade ? '' : ' · courier pan-India') + '</span></li>' +
+        '</ul>' +
+        '<div style="display:flex;gap:10px;flex-wrap:wrap">' +
+          '<a class="btn btn-primary btn-sm" href="eye-test.html">Book a free eye test</a>' +
+          '<a class="btn btn-soft btn-sm" href="https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(store.mapQuery) + '" target="_blank" rel="noopener">Open in Google Maps</a>' +
+        '</div>' +
+      '</div>' +
+      '<div class="visit-map">' +
+        '<iframe title="A1 Opticals on Google Maps" loading="lazy" referrerpolicy="no-referrer-when-downgrade" ' +
+          'src="https://www.google.com/maps?q=' + encodeURIComponent(store.mapQuery) + '&z=17&output=embed"></iframe>' +
+      '</div>';
+  }
+})();
+</script>
+</body>
+</html>

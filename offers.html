@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Offers — A1 Opticals</title>
+<meta name="theme-color" content="#14181A">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="stylesheet" href="store.css">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%2314181A'/><text x='50' y='67' text-anchor='middle' font-family='Helvetica,Arial,sans-serif' font-size='48' font-weight='700' fill='%23FFFFFF'>A1</text></svg>">
+</head>
+<body data-page="offers.html">
+<div id="chrome-top"></div>
+
+<main id="main">
+  <section class="band" style="border-top:0">
+    <div class="wrap" style="padding-top:52px;padding-bottom:52px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:44px;align-items:center" class="offer-hero">
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="mono">Why the price is the price</div>
+          <h1 style="font-size:36px">Most optical sites quote you a frame. You pay for a pair of glasses.</h1>
+          <p style="font-size:15.5px;line-height:1.7;color:var(--ink-2);max-width:60ch" id="whyText"></p>
+        </div>
+        <div class="panel" id="lenses">
+          <div class="mono" style="margin-bottom:12px">Lens upgrades, listed</div>
+          <div class="guide" id="lensGuide"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="wrap">
+    <section class="section" id="bogoWrap" hidden>
+      <div class="section-head">
+        <div><h2 id="bogoTitle"></h2><span class="sub" id="bogoSub"></span></div>
+        <a class="more" href="shop.html?offer=bogo">All eligible frames →</a>
+      </div>
+      <div class="grid" id="bogoGrid"></div>
+    </section>
+
+    <section class="section tight">
+      <div class="section-head">
+        <div><h2 id="underTitle"></h2><span class="sub">Complete pairs, lenses included</span></div>
+        <a class="more" href="shop.html?offer=under">See all →</a>
+      </div>
+      <div class="grid" id="underGrid"></div>
+    </section>
+
+    <section class="section tight">
+      <div class="promos" id="promos" style="padding-top:0"></div>
+    </section>
+  </div>
+</main>
+
+<div id="chrome-foot"></div>
+
+<script src="catalog.js"></script>
+<script src="site.js"></script>
+<script src="store.js"></script>
+<script src="chrome.js"></script>
+<script src="card.js"></script>
+<script>
+(function(){
+  'use strict';
+  var esc = window.escapeHtml;
+  var inc = SITE.includedLens();
+  var offers = SITE.get('offers');
+
+  document.getElementById('whyText').textContent = 'The lens is half the cost and all of the waiting. We put a standard single-vision lens with anti-glare into every price on the site, so a ' + Store.rupees(Store.displayPrice(CATALOG.bySku('A1-FR-2105') || CATALOG.products[0])) + ' frame costs ' + Store.rupees(Store.displayPrice(CATALOG.bySku('A1-FR-2105') || CATALOG.products[0])) + '. Upgrades — thinner, blue-cut, progressive — are listed with their price before you add anything to the bag.';
+
+  document.getElementById('lensGuide').innerHTML = SITE.lensPackages().map(function(l){
+    var d = l.price - (inc ? inc.price : 0);
+    return '<div><div><b>' + esc(l.label) + '</b><span>' + esc(l.desc) + '</span></div><span class="p' + (l.included ? ' inc' : '') + '">' + (l.included ? 'Included' : (d > 0 ? '+' : '') + Store.rupees(d)) + '</span></div>';
+  }).join('');
+
+  var bogo = Store.bogoRule();
+  if (bogo) {
+    document.getElementById('bogoWrap').hidden = false;
+    document.getElementById('bogoTitle').textContent = bogo.label + ' free';
+    document.getElementById('bogoSub').textContent = 'On ' + bogo.brands.join(', ') + ' frames — add two to the bag and the cheaper one is free, lenses included on both.';
+    document.getElementById('bogoGrid').innerHTML = Store.search({ offer: 'bogo', group: true, sort: 'rating' }).slice(0, 10).map(function(p){ return window.cardHtml(p); }).join('');
+  }
+  document.getElementById('underTitle').textContent = 'Under ' + Store.rupees(offers.underPrice);
+  document.getElementById('underGrid').innerHTML = Store.search({ offer: 'under', group: true, sort: 'price-asc' }).slice(0, 10).map(function(p){ return window.cardHtml(p); }).join('');
+
+  document.getElementById('promos').innerHTML = SITE.get('promos').map(function(p){
+    return '<div class="promo' + (p.dark ? ' dark' : '') + '"><span class="mono">' + esc(p.kicker) + '</span><h3>' + esc(p.title) + '</h3><p>' + esc(p.text) + '</p><a class="more" href="' + esc(p.href) + '">' + esc(p.cta) + '</a></div>';
+  }).join('');
+})();
+</script>
+<style>@media(max-width:900px){ .offer-hero{ grid-template-columns:1fr !important } }</style>
+</body>
+</html>

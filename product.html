@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Product — A1 Opticals</title>
+<meta name="theme-color" content="#14181A">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="stylesheet" href="store.css">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%2314181A'/><text x='50' y='67' text-anchor='middle' font-family='Helvetica,Arial,sans-serif' font-size='48' font-weight='700' fill='%23FFFFFF'>A1</text></svg>">
+</head>
+<body data-page="product.html">
+<div id="chrome-top"></div>
+
+<main id="main">
+  <div class="wrap">
+    <div class="pdp" id="pdp"></div>
+
+    <section class="section tight" id="alsoWrap" hidden>
+      <div class="section-head"><h2 id="alsoTitle">More like this</h2><a class="more" id="alsoLink" href="shop.html">See all →</a></div>
+      <div class="grid" id="also"></div>
+    </section>
+  </div>
+</main>
+
+<div id="chrome-foot"></div>
+
+<script src="catalog.js"></script>
+<script src="site.js"></script>
+<script src="store.js"></script>
+<script src="chrome.js"></script>
+<script src="card.js"></script>
+<script>
+(function(){
+  'use strict';
+  var esc = window.escapeHtml;
+  var params = new URLSearchParams(location.search);
+  var sku = params.get('sku');
+  var p = sku ? CATALOG.bySku(sku) : null;
+  var pdp = document.getElementById('pdp');
+
+  if (!p){
+    pdp.innerHTML =
+      '<div class="empty" style="grid-column:1/-1">' +
+        '<h3>We cannot find that frame</h3>' +
+        '<p>It may have sold out and been retired.</p>' +
+        '<p style="margin-top:16px"><a class="btn btn-primary" href="shop.html">Back to the shop</a></p>' +
+      '</div>';
+    document.title = 'Not found — A1 Opticals';
+    return;
+  }
+
+  var cat = CATALOG.category(p.cat) || {};
+  var tradeView = Store.tradePricing(p);
+  var lf = Store.lensFor(p);
+  var lensId = lf.applies ? (SITE.lens(params.get('lens')) ? params.get('lens') : lf.defaultId) : null;
+  var variant = p.variants[0].id;
+  var qty = tradeView ? (p.moq || 1) : 1;
+  var view = 0;
+  var lensOK = !tradeView && lf.applies;
+
+  document.title = p.name + (p.colour ? ' · ' + p.colour.label : '') + ' — A1 Opticals';
+
+  /* ── gallery: uploaded photos if the owner has added any, otherwise the
+     render seen straight on, at an angle and from the side, then every
+     colourway. Clicking a colourway thumb changes the SKU. ── */
+  function views(){
+    var out = [];
+    var shots = CATALOG.photos(p);
+    if (shots.length > 1 || /^(data:|https?:|\.{0,2}\/)/.test(shots[0])) {
+      shots.forEach(function(s, i){ out.push({ label: i === 0 ? 'FRONT' : 'PHOTO ' + (i + 1), src: CATALOG.img(s), cls: '' }); });
+    } else {
+      out.push({ label: 'FRONT', src: CATALOG.img(p.photo), cls: '' });
+      if (/^(frame|sun):/.test(p.photo || '')) {
+        out.push({ label: 'ANGLE', src: CATALOG.img(p.photo), cls: 'angle' });
+        out.push({ label: 'SIDE', src: CATALOG.img(p.photo), cls: 'side' });
+      }
+    }
+    CATALOG.siblings(p).forEach(function(s){ if (s.sku !== p.sku) out.push({ label: (s.colour ? s.colour.label : s.sku).toUpperCase(), src: CATALOG.img(s.photo), cls: '', sku: s.sku }); });
+    return out.slice(0, 5);
+  }
+
+  function stockLine(){
+    if (p.stock === 0) return '<span class="out">Out of stock</span>';
+    if (tradeView && p.rx) return '<span class="in">Made to prescription · 3–4 working days</span>';
+    if (p.stock <= 3) return '<span class="low">Only ' + p.stock + ' left</span>';
+    if (tradeView) return '<span class="in">' + p.stock + ' in stock · same-day dispatch before 2 pm</span>';
+    return '<span class="in">In stock, ' + (lensOK && lensId !== 'none' ? 'fitted in 48 hours' : 'ships tomorrow') + '</span>';
+  }
+
+  function dimsHtml(){
+    var d = CATALOG.dims(CATALOG.variant(p, variant));
+    if (!d) return '';
+    return '<div class="dims">' +
+      '<div><span>LENS WIDTH</span><b>' + d.lens + ' mm</b></div>' +
+      '<div><span>BRIDGE</span><b>' + d.bridge + ' mm</b></div>' +
+      '<div><span>TEMPLE</span><b>' + d.temple + ' mm</b></div>' +
+      '<div><span>WEIGHT</span><b>' + (p.weight ? p.weight + ' g' : '—') + '</b></div>' +
+    '</div>';
+  }
+
+  /* ── retail: lens choice, prescription, breakdown ── */
+  function lensOptions(){
+    if (!lensOK) return '';
+    var pk = SITE.lensPackages();
+    var inc = Store.lensOf(p, null);
+    return '<div class="pick">' +
+      '<div class="lens-head"><span class="k">Choose your lens</span><button type="button" class="linkish" id="lensGuide" style="font-size:13px">Which do I need?</button></div>' +
+      '<div class="lens-opts" role="radiogroup" aria-label="Lens package">' +
+        pk.map(function(l){
+          var delta = l.price - (inc ? inc.price : 0);
+          var isInc = inc && l.id === inc.id;
+          var label = isInc ? (lf.optional ? 'Included' : 'Included') : (delta > 0 ? '+' : '') + Store.rupees(delta);
+          var desc = l.desc;
+          if (lf.optional && l.plano) { desc = 'Tinted UV400 lenses as shown, no power.'; }
+          return '<button type="button" class="lens-opt' + (l.id === lensId ? ' on' : '') + '" data-lens="' + esc(l.id) + '" role="radio" aria-checked="' + (l.id === lensId) + '">' +
+            '<span class="lo-text"><span class="radio"></span><div><b>' + esc(lf.optional && l.plano ? 'Plain tinted lenses' : l.label) + '</b><span class="d">' + esc(desc) + '</span></div></span>' +
+            '<span class="lo-price' + (delta < 0 ? ' minus' : '') + '">' + label + '</span>' +
+          '</button>';
+        }).join('') +
+      '</div></div>';
+  }
+
+  function rxPanel(){
+    var lens = Store.lensOf(p, lensId);
+    var needs = (lensOK && lens && !lens.plano) || (!tradeView && cat.rx);
+    if (!needs) return '';
+    var rx = Store.getRx();
+    if (rx && Store.rxComplete(rx)) {
+      return '<div class="rx-panel">' +
+        '<b>Your prescription</b>' +
+        '<div class="rx-saved"><span class="ok"><i class="fa-solid fa-circle-check"></i> Saved</span><span>' + esc(Store.rxSummary(rx)) + '</span></div>' +
+        '<div class="row"><button type="button" class="btn btn-soft" id="rxEnter">Change</button><button type="button" class="btn btn-soft" id="rxClear">Remove</button></div>' +
+      '</div>';
+    }
+    return '<div class="rx-panel">' +
+      '<b>Your prescription</b>' +
+      '<p>Add it now or after payment — we won’t start cutting until we have it. Type it in, upload a photo, or let us ring you.</p>' +
+      '<div class="row">' +
+        '<button type="button" class="btn btn-ghost" id="rxEnter">Enter power</button>' +
+        '<button type="button" class="btn btn-soft" id="rxUpload">Upload photo</button>' +
+        '<button type="button" class="btn btn-soft" id="rxLater">Add later</button>' +
+      '</div>' +
+      '<input type="file" id="rxFile" accept="image/*" hidden>' +
+    '</div>';
+  }
+
+  function breakdown(){
+    var bd = Store.breakdown(p, variant, lensId);
+    var total = Store.unitPrice(p, variant, 1, lensId);
+    var was = p.mrp > total ? p.mrp : 0;
+    var rows = '';
+    if (lensOK) {
+      rows += '<div class="row"><span>Frame</span><span>' + Store.rupees(bd.frame) + '</span></div>';
+      if (bd.lensPkg) rows += '<div class="row"><span>' + esc(lf.optional && bd.lensPkg.plano ? 'Tinted lenses' : bd.lensPkg.label + ' lenses') + '</span><span>' + (bd.lens ? Store.rupees(bd.lens) : '<span class="free">Included</span>') + '</span></div>';
+      rows += '<div class="row"><span>Case, cloth, fitting</span><span class="free">Free</span></div>';
+    } else {
+      rows += '<div class="row"><span>' + esc(p.name) + ' · ' + esc(CATALOG.variant(p, variant).label) + '</span><span>' + Store.rupees(total) + '</span></div>';
+      if (p.cat !== 'accessories') rows += '<div class="row"><span>Delivery</span><span class="free">' + (total >= SITE.get('delivery').retail.freeOver ? 'Free' : 'From ' + Store.rupees(SITE.get('delivery').retail.flat)) + '</span></div>';
+    }
+    return '<div class="breakdown">' + rows +
+      '<div class="row total"><span>Total</span><span>' + (was ? '<span class="was">' + Store.rupees(was) + '</span>' : '') + '<span class="now">' + Store.rupees(total) + '</span></span></div>' +
+    '</div>';
+  }
+
+  /* ── trade: the price ladder with the step the quantity has reached lit ── */
+  function tierRow(){
+    var steps = [{ min: 1, price: p.price }].concat(p.tiers || []);
+    if (steps.length < 2) return '';
+    var reached = 0;
+    steps.forEach(function(t, i){ if (qty >= t.min) reached = i; });
+    return '<div class="tier-table">' + steps.map(function(t, i){
+      return '<span class="' + (i === reached ? 'on' : '') + '">' + t.min + '+ · ' + Store.rupees(t.price + (CATALOG.priceOf(p, variant, 1) - p.price)) + '</span>';
+    }).join('') + '</div>';
+  }
+  function rxGrid(){
+    var cols = ['SPH', 'CYL', 'AXIS', 'ADD', 'PD'];
+    function row(eye){
+      return '<tr><td class="mono" style="letter-spacing:.1em">' + eye + '</td>' +
+        cols.map(function(c){ return '<td><input inputmode="decimal" placeholder="' + (c === 'AXIS' ? '0–180' : c === 'PD' ? 'mm' : '0.00') + '" aria-label="' + eye + ' ' + c + '"></td>'; }).join('') +
+        '</tr>';
+    }
+    return '<div class="rx-grid"><table><thead><tr><th></th>' +
+      cols.map(function(c){ return '<th>' + c + '</th>'; }).join('') + '</tr></thead><tbody>' +
+      row('R') + row('L') + '</tbody></table>' +
+      '<div class="mono" style="margin-top:10px; letter-spacing:.06em; text-transform:none">One prescription per pair · fitting height and frame trace attached at checkout</div></div>';
+  }
+
+  function render(){
+    var vs = views();
+    var sibs = CATALOG.siblings(p);
+    var unit = Store.unitPrice(p, variant, qty, lensId);
+    var sizeIsPower = p.cat === 'readers';
+    var many = p.variants.length > 1;
+    var sized = !!CATALOG.dims(p.variants[0]);
+    var pickLabel = sizeIsPower ? 'Power' : p.cat === 'contacts' ? 'Power range' : sized ? 'Size' : 'Option';
+
+    pdp.innerHTML =
+      '<div class="pdp-media">' +
+        '<div class="crumb"><a href="index.html">Home</a> / <a href="shop.html?cat=' + esc(p.cat) + '">' + esc(cat.label || p.cat) + '</a>' +
+          (p.attrs && p.attrs.gender && p.attrs.gender !== 'Unisex' ? ' / <a href="shop.html?cat=' + esc(p.cat) + '&gender=' + encodeURIComponent(p.attrs.gender) + '">' + esc(p.attrs.gender) + '</a>' : '') +
+          ' / ' + esc(p.name) + '</div>' +
+        '<div class="gallery-main ' + (vs[view] ? vs[view].cls : '') + '"><img id="mainImg" src="' + (vs[view] || vs[0]).src + '" alt="' + esc(p.name) + '" loading="eager" fetchpriority="high"></div>' +
+        '<div class="thumbs">' + vs.map(function(v, i){
+          return '<button type="button" class="thumb-btn ' + v.cls + (i === view ? ' on' : '') + '" data-view="' + i + '"' + (v.sku ? ' data-sku="' + esc(v.sku) + '"' : '') + ' aria-label="' + esc(v.label) + '"><img src="' + v.src + '" alt=""><span>' + esc(v.label) + '</span></button>';
+        }).join('') + '</div>' +
+      '</div>' +
+      '<div class="pdp-more">' +
+        dimsHtml() +
+        '<p class="pdp-blurb">' + esc(p.blurb || '') + '</p>' +
+        (tradeView ? '' :
+        '<div class="facts" style="margin-top:8px">' +
+          '<div class="fact"><span>Brand</span><span>' + esc(p.brand) + '</span></div>' +
+          (p.style ? '<div class="fact"><span>Style</span><span>' + esc(p.style) + '</span></div>' : '') +
+          (p.attrs && p.attrs.material ? '<div class="fact"><span>Material</span><span>' + esc(p.attrs.material) + '</span></div>' : '') +
+          (p.attrs && p.attrs.shape ? '<div class="fact"><span>Shape</span><span>' + esc(p.attrs.shape) + '</span></div>' : '') +
+          (CATALOG.widthBand(p) ? '<div class="fact"><span>Fit</span><span>' + esc(CATALOG.widthBand(p)) + ' · about ' + CATALOG.frameWidth(p) + ' mm across</span></div>' : '') +
+          '<div class="fact"><span>Returns</span><span>14 days, including powered lenses</span></div>' +
+          '<div class="fact"><span>Warranty</span><span>12 months on the frame · 6 months on lens coatings</span></div>' +
+        '</div>') +
+      '</div>' +
+
+      '<div class="pdp-buy">' +
+        '<div class="pdp-title">' +
+          '<span class="brand">' + esc(p.brand) + (tradeView ? ' · ' + esc(p.sku) + ' · ' + esc(p.pack) : '') + '</span>' +
+          '<h1>' + esc(p.name) + (p.colour ? ' · ' + esc(p.colour.label) : '') + '</h1>' +
+          '<div class="pdp-meta">' + (p.rating ? window.starsHtml(p.rating, p.reviews) + '<span>·</span>' : '') + stockLine() + '</div>' +
+        '</div>' +
+
+        (sibs.length > 1 ?
+        '<div class="pick"><span class="pick-k">Colour · <em>' + esc(p.colour.label) + '</em></span>' +
+          '<div class="pdp-swatches" role="group" aria-label="Colours">' +
+            sibs.map(function(s){
+              return '<a class="sw' + (s.sku === p.sku ? ' on' : '') + (s.stock === 0 ? ' out' : '') + '" href="product.html?sku=' + encodeURIComponent(s.sku) + (lensId && lensId !== lf.defaultId ? '&lens=' + encodeURIComponent(lensId) : '') + '" ' +
+                     'style="--sw:' + esc(s.colour.hex) + '" title="' + esc(s.colour.label) + '" aria-label="' + esc(s.colour.label) + '"></a>';
+            }).join('') +
+          '</div></div>' : '') +
+
+        (many ?
+        '<div class="pick"><span class="pick-k">' + pickLabel + (sized && CATALOG.widthBand(p) ? ' · <em>' + esc(CATALOG.widthBand(p)) + ' fit</em>' : '') + '</span>' +
+          '<div class="opt-row" id="variants" role="group" aria-label="Choose an option">' +
+            p.variants.map(function(v){
+              var text = sized ? CATALOG.sizeLabel(p, v.id) : v.label;
+              return '<button type="button" class="opt-btn' + (sized ? ' tnum' : '') + '" data-v="' + esc(v.id) + '" aria-pressed="' + (v.id === variant) + '">' + esc(text) +
+                     (v.delta ? ' <span style="opacity:.7">' + (v.delta > 0 ? '+' : '−') + Store.rupees(Math.abs(v.delta)) + '</span>' : '') + '</button>';
+            }).join('') +
+          '</div>' +
+          (sized ? '<span class="pick-hint">Lens width · bridge · temple length, in mm — the numbers stamped inside the arm</span>' : '') +
+        '</div>' : '') +
+
+        '<div class="hr"></div>' +
+
+        (tradeView ?
+          '<div class="pdp-price">' +
+            '<span class="now">' + Store.rupees(unit) + ' <small style="font-size:14px;font-weight:400;color:var(--muted)">/ ' + esc(p.unit) + ' at ' + qty + '</small></span>' +
+            '<span class="was">MRP ' + Store.rupees(p.mrp) + '</span>' +
+            (Math.round((1 - unit / p.mrp) * 100) > 0 ? '<span class="off">' + Math.round((1 - unit / p.mrp) * 100) + '% margin</span>' : '') +
+          '</div>' +
+          tierRow() +
+          '<div class="pdp-tax">Trade price inclusive of ' + p.gst + '% GST (' + Store.rupees(Store.taxSplit(unit, p.gst).tax) + ' per ' + esc(p.unit) + ') · HSN ' + esc(p.hsn) + '</div>' +
+          (p.rx ? rxGrid() : '') +
+          (!Store.isTrade()
+            ? '<div class="note"><i class="fa-solid fa-lock"></i><div><strong>Trade item.</strong> Stock lenses and instruments are sold to opticians and clinics with a trade account. <a href="trade.html" style="color:var(--teal);font-weight:600">Open one</a> — GSTIN and a phone call, one working day.</div></div>'
+            : '<div class="buy-row">' +
+                '<div class="qty"><button type="button" id="qMinus" aria-label="Reduce quantity">−</button><input id="qNum" class="tnum" value="' + qty + '" inputmode="numeric" aria-label="Quantity"><button type="button" id="qPlus" aria-label="Increase quantity">+</button></div>' +
+                '<button class="btn btn-primary" id="addBtn"' + (p.stock === 0 ? ' disabled' : '') + '><i class="fa-solid fa-plus"></i> Add to order</button>' +
+                '<a class="btn btn-ghost" href="cart.html">View order</a>' +
+              '</div>') +
+          '<div class="facts">' +
+            '<div class="fact"><span>Range</span><span>' + esc(p.brand) + '</span></div>' +
+            '<div class="fact"><span>Sold as</span><span>' + esc(p.pack) + '</span></div>' +
+            (p.attrs && p.attrs.material ? '<div class="fact"><span>Material</span><span>' + esc(p.attrs.material) + '</span></div>' : '') +
+            (p.attrs && p.attrs.shape ? '<div class="fact"><span>Shape</span><span>' + esc(p.attrs.shape) + '</span></div>' : '') +
+            '<div class="fact"><span>SKU</span><span class="tnum">' + esc(p.sku) + '</span></div>' +
+            '<div class="fact"><span>HSN · GST</span><span class="tnum">' + esc(p.hsn) + ' · ' + p.gst + '%</span></div>' +
+            '<div class="fact"><span>Delivery</span><span>Free in the Tricity over ' + Store.rupees(SITE.get('delivery').trade.freeOver) + '</span></div>' +
+            '<div class="fact"><span>Returns</span><span>' + (p.rx ? 'Rx lenses are not returnable' : '7 days, unopened stock') + '</span></div>' +
+          '</div>'
+        :
+          lensOptions() +
+          rxPanel() +
+          (lensOK || cat.rx ? '<div class="hr"></div>' : '') +
+          breakdown() +
+          '<div class="buy-col">' +
+            '<button class="btn btn-primary btn-lg" id="addBtn"' + (p.stock === 0 ? ' disabled' : '') + '>' + (p.stock === 0 ? 'Out of stock' : 'Add to bag · ' + Store.rupees(Store.unitPrice(p, variant, 1, lensId))) + '</button>' +
+            (p.cat !== 'accessories' && p.cat !== 'contacts' ? '<button type="button" class="btn btn-ghost" id="reserveBtn">Reserve to try in store</button>' : '') +
+            (Store.bogoEligible(p) ? '<span class="note-c">' + esc(Store.bogoRule().note) + '</span>' : '') +
+          '</div>'
+        ) +
+      '</div>';
+
+    /* gallery */
+    pdp.querySelectorAll('.thumb-btn').forEach(function(b){
+      b.addEventListener('click', function(){
+        if (b.getAttribute('data-sku')) { location.href = 'product.html?sku=' + encodeURIComponent(b.getAttribute('data-sku')); return; }
+        view = +b.getAttribute('data-view'); render();
+      });
+    });
+
+    /* size / option */
+    pdp.querySelectorAll('#variants .opt-btn').forEach(function(b){
+      b.addEventListener('click', function(){ variant = b.getAttribute('data-v'); render(); });
+    });
+
+    /* lens package */
+    pdp.querySelectorAll('.lens-opt').forEach(function(b){
+      b.addEventListener('click', function(){ lensId = b.getAttribute('data-lens'); render(); });
+    });
+    var lg = document.getElementById('lensGuide');
+    if (lg) lg.addEventListener('click', lensGuide);
+
+    /* prescription */
+    var re = document.getElementById('rxEnter');
+    if (re) re.addEventListener('click', rxModal);
+    var rc = document.getElementById('rxClear');
+    if (rc) rc.addEventListener('click', function(){ Store.clearRx(); render(); });
+    var ru = document.getElementById('rxUpload');
+    if (ru) ru.addEventListener('click', function(){ document.getElementById('rxFile').click(); });
+    var rf = document.getElementById('rxFile');
+    if (rf) rf.addEventListener('change', function(e){
+      var file = e.target.files && e.target.files[0]; if (!file) return;
+      shrink(file, function(dataUrl){
+        Store.setRx({ method: 'photo', photo: dataUrl, od: {}, os: {}, pd: {} });
+        window.toast('Prescription photo saved');
+        render();
+      });
+    });
+    var rl = document.getElementById('rxLater');
+    if (rl) rl.addEventListener('click', function(){ Store.setRx({ method: 'later', od: {}, os: {}, pd: {} }); window.toast('No problem — we will ask for it after payment'); render(); });
+
+    /* quantity (trade) */
+    var num = document.getElementById('qNum');
+    if (num) {
+      function setQ(n){ qty = Math.max(p.moq || 1, Math.min(p.stock || 1, n || 1)); num.value = qty; render(); }
+      document.getElementById('qMinus').addEventListener('click', function(){ setQ(qty - 1); });
+      document.getElementById('qPlus').addEventListener('click', function(){ setQ(qty + 1); });
+      num.addEventListener('change', function(){ setQ(parseInt(num.value, 10)); });
+    }
+
+    /* add */
+    var add = document.getElementById('addBtn');
+    if (add) add.addEventListener('click', function(){
+      var r = Store.add(p.sku, variant, qty, lensId);
+      if (r.ok && r.capped) window.toast('Added — that is all ' + r.max + ' in stock', 'fa-triangle-exclamation');
+      else if (r.ok) {
+        window.toast((tradeView ? qty + ' × ' : '') + p.name + (p.colour ? ' · ' + p.colour.label : '') + ' added to your ' + (Store.isTrade() ? 'order' : 'bag'));
+        add.innerHTML = '<i class="fa-solid fa-check"></i> Added — <span style="text-decoration:underline">go to ' + (Store.isTrade() ? 'order' : 'bag') + '</span>';
+        add.onclick = function(){ location.href = 'cart.html'; };
+      }
+      else if (r.reason === 'out-of-stock')  window.toast('Out of stock', 'fa-circle-xmark');
+      else if (r.reason === 'stock-capped')  window.toast('Your bag already has all ' + r.max, 'fa-triangle-exclamation');
+    });
+
+    var rb = document.getElementById('reserveBtn');
+    if (rb) rb.addEventListener('click', reserveModal);
+  }
+
+  /* Uploaded prescription photos are resized in the browser before they are
+     kept, so a 6 MB phone photo does not become 6 MB of localStorage. */
+  function shrink(file, done){
+    var reader = new FileReader();
+    reader.onload = function(){
+      var im = new Image();
+      im.onload = function(){
+        var max = 1200, w = im.width, h = im.height, k = Math.min(1, max / Math.max(w, h));
+        var c = document.createElement('canvas'); c.width = Math.round(w * k); c.height = Math.round(h * k);
+        c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+        done(c.toDataURL('image/jpeg', 0.8));
+      };
+      im.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function rxModal(){
+    var rx = Store.getRx() || { od: {}, os: {}, pd: {} };
+    if (!rx.od) rx.od = {}; if (!rx.os) rx.os = {}; if (!rx.pd) rx.pd = {};
+    var m = window.modal(
+      '<h2>Your prescription</h2>' +
+      '<p>Copy it from your last eye test. SPH is the main number; CYL and AXIS only if they appear on it. ADD is for progressives.</p>' +
+      '<div class="rx-table">' +
+        '<span></span><span class="h">SPH</span><span class="h">CYL</span><span class="h">AXIS</span><span class="h">ADD</span>' +
+        '<span class="eye">Right</span><input id="odS" inputmode="decimal" placeholder="−2.25" value="' + esc(rx.od.sph || '') + '"><input id="odC" inputmode="decimal" placeholder="−0.50" value="' + esc(rx.od.cyl || '') + '"><input id="odA" inputmode="numeric" placeholder="180" value="' + esc(rx.od.axis || '') + '"><input id="odD" inputmode="decimal" placeholder="—" value="' + esc(rx.od.add || '') + '">' +
+        '<span class="eye">Left</span><input id="osS" inputmode="decimal" placeholder="−1.75" value="' + esc(rx.os.sph || '') + '"><input id="osC" inputmode="decimal" placeholder="−0.25" value="' + esc(rx.os.cyl || '') + '"><input id="osA" inputmode="numeric" placeholder="175" value="' + esc(rx.os.axis || '') + '"><input id="osD" inputmode="decimal" placeholder="—" value="' + esc(rx.os.add || '') + '">' +
+      '</div>' +
+      '<label class="check"><input type="checkbox" id="pdOn"' + (rx.pd.on ? ' checked' : '') + '><span>I know my pupillary distance (PD)</span></label>' +
+      '<div class="row2" id="pdRow"' + (rx.pd.on ? '' : ' hidden') + '><div class="field"><label for="pdR">PD right (mm)</label><input id="pdR" inputmode="decimal" placeholder="31.5" value="' + esc(rx.pd.r || '') + '"></div><div class="field"><label for="pdL">PD left (mm)</label><input id="pdL" inputmode="decimal" placeholder="31.5" value="' + esc(rx.pd.l || '') + '"></div></div>' +
+      '<p class="err" id="rxErr" hidden style="color:#B3261E"></p>' +
+      '<div class="actions"><button type="button" class="btn btn-primary" id="rxSave">Save power</button><button type="button" class="btn btn-soft" data-close>Cancel</button></div>'
+    );
+    m.querySelector('#pdOn').addEventListener('change', function(e){ m.querySelector('#pdRow').hidden = !e.target.checked; });
+    m.querySelector('#rxSave').addEventListener('click', function(){
+      var g = function(id){ return m.querySelector('#' + id).value.trim().replace(/−/g, '-'); };
+      if (g('odS') === '' || g('osS') === '' || isNaN(parseFloat(g('odS'))) || isNaN(parseFloat(g('osS')))) {
+        var e = m.querySelector('#rxErr'); e.hidden = false; e.textContent = 'SPH for both eyes, please — 0.00 if there is none.'; return;
+      }
+      Store.setRx({ method: 'typed', od: { sph: g('odS'), cyl: g('odC'), axis: g('odA'), add: g('odD') }, os: { sph: g('osS'), cyl: g('osC'), axis: g('osA'), add: g('osD') },
+        pd: { on: m.querySelector('#pdOn').checked, r: g('pdR'), l: g('pdL') } });
+      window.closeModal();
+      var adv = Store.lensAdvice(Store.getRx(), lensId);
+      window.toast(adv && adv.level === 'warn' ? 'Power saved — a thinner lens is recommended for it' : 'Power saved');
+      render();
+    });
+  }
+
+  function lensGuide(){
+    var inc = Store.lensOf(p, null);
+    window.modal(
+      '<h2>Which lens do I need?</h2>' +
+      '<p>Every frame comes with single-vision lenses and anti-glare in the price. Most people need nothing more. Upgrade when one of these is you:</p>' +
+      '<div class="guide">' +
+        SITE.lensPackages().map(function(l){
+          var delta = l.price - (inc ? inc.price : 0);
+          var why = { sv: 'One power for distance or reading. Anti-glare cuts reflections from screens and headlights.', thin: 'Your SPH is above ±4.00. A standard lens gets thick at the edge and shows outside the frame.', blue: 'You are on a screen most of the day. Filters the blue end of the spectrum; slight warm tint.', prog: 'You are over 40 and reading is getting harder. Distance at the top, reading at the bottom, no line.', none: 'You want the frame for fashion, or will have lenses fitted elsewhere.' }[l.id] || l.desc;
+          return '<div><div><b>' + esc(l.label) + '</b><span>' + esc(why) + '</span></div><span class="p' + (l.included ? ' inc' : '') + '">' + (l.included ? 'Included' : (delta > 0 ? '+' : '') + Store.rupees(delta)) + '</span></div>';
+        }).join('') +
+      '</div>' +
+      '<p>Not sure? <a href="eye-test.html" style="color:var(--teal);font-weight:600">Book a free eye test</a> — the optometrist writes the lens on your prescription.</p>' +
+      '<div class="actions"><button type="button" class="btn btn-primary" data-close>Got it</button></div>', { wide: true }
+    );
+  }
+
+  function reserveModal(){
+    var u = Store.getUser() || {};
+    var stores = SITE.stores();
+    var m = window.modal(
+      '<h2>Reserve to try in store</h2>' +
+      '<p>We keep <strong>' + esc(p.name) + (p.colour ? ' · ' + esc(p.colour.label) : '') + '</strong> aside for two days. No payment, no obligation — try it on and buy it there if you like it.</p>' +
+      (stores.length > 1 ? '<div class="field"><label for="rvStore">Store</label><select id="rvStore">' + stores.map(function(s){ return '<option value="' + esc(s.id) + '">' + esc(s.name + ', ' + s.city) + '</option>'; }).join('') + '</select></div>' : '') +
+      '<div class="row2"><div class="field"><label for="rvName">Your name</label><input id="rvName" value="' + esc(u.name || '') + '" autocomplete="name"></div><div class="field"><label for="rvPhone">Mobile</label><input id="rvPhone" type="tel" value="' + esc(u.phone || '') + '" autocomplete="tel"></div></div>' +
+      '<p class="err" id="rvErr" hidden style="color:#B3261E"></p>' +
+      '<div class="actions"><button type="button" class="btn btn-primary" id="rvGo">Reserve it</button><button type="button" class="btn btn-soft" data-close>Cancel</button></div>'
+    );
+    m.querySelector('#rvGo').addEventListener('click', function(){
+      var name = m.querySelector('#rvName').value.trim(), phone = m.querySelector('#rvPhone').value.trim();
+      if (name.length < 2 || !/^[+ 0-9-]{10,15}$/.test(phone)) { var e = m.querySelector('#rvErr'); e.hidden = false; e.textContent = 'A name and a ten-digit mobile number, please.'; return; }
+      var st = m.querySelector('#rvStore'); var storeId = st ? st.value : stores[0].id;
+      var r = Store.reserve({ sku: p.sku, name: p.name + (p.colour ? ' · ' + p.colour.label : ''), size: CATALOG.sizeLabel(p, variant) || CATALOG.variant(p, variant).label, customer: name, phone: phone, store: storeId });
+      window.closeModal();
+      window.modal('<h2>Reserved — ' + esc(r.ref) + '</h2><p>It is set aside at ' + esc(SITE.store(storeId).name) + ', ' + esc(SITE.store(storeId).city) + ' for 48 hours. We will WhatsApp ' + esc(phone) + ' to confirm. Ask for the reference at the counter.</p><div class="actions"><button type="button" class="btn btn-primary" data-close>Done</button></div>');
+    });
+  }
+
+  render();
+
+  /* Same category, excluding this model. A related rail that shows the thing
+     you are already looking at is the oldest tell of a template. */
+  var also = CATALOG.models(CATALOG.products.filter(function(o){ return o.cat === p.cat && o.model !== p.model && o.stock > 0; })).slice(0, 5);
+  if (also.length){
+    document.getElementById('alsoWrap').hidden = false;
+    document.getElementById('alsoTitle').textContent = 'More ' + (cat.label || '').toLowerCase();
+    document.getElementById('alsoLink').href = 'shop.html?cat=' + encodeURIComponent(p.cat);
+    document.getElementById('also').innerHTML = also.map(function(o){ return window.cardHtml(o); }).join('');
+  }
+})();
+</script>
+</body>
+</html>

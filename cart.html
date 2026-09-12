@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Your bag — A1 Opticals</title>
+<meta name="theme-color" content="#14181A">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="stylesheet" href="store.css">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%2314181A'/><text x='50' y='67' text-anchor='middle' font-family='Helvetica,Arial,sans-serif' font-size='48' font-weight='700' fill='%23FFFFFF'>A1</text></svg>">
+</head>
+<body data-page="cart.html">
+<div id="chrome-top"></div>
+
+<main id="main">
+  <div class="wrap">
+    <div class="steps" id="steps"></div>
+    <div id="cartWrap"></div>
+  </div>
+</main>
+
+<div id="chrome-foot"></div>
+
+<script src="catalog.js"></script>
+<script src="site.js"></script>
+<script src="store.js"></script>
+<script src="chrome.js"></script>
+<script>
+(function(){
+  'use strict';
+  var esc = window.escapeHtml;
+  var trade = Store.isTrade();
+
+  function steps(rxNeeded){
+    var list = trade
+      ? ['Order', 'Delivery', 'Payment']
+      : rxNeeded ? ['Bag', 'Prescription', 'Delivery', 'Payment'] : ['Bag', 'Delivery', 'Payment'];
+    document.getElementById('steps').innerHTML = list.map(function(s, i){
+      return '<div class="step' + (i === 0 ? ' on' : '') + '"><b>' + (i + 1) + '</b><span>' + s + '</span></div>';
+    }).join('');
+  }
+
+  function render(){
+    var t = Store.totals();
+    var wrap = document.getElementById('cartWrap');
+    steps(t.rxNeeded);
+
+    if (!t.lines.length){
+      wrap.innerHTML =
+        '<div class="empty">' +
+          '<h3>Nothing in your ' + (trade ? 'order' : 'bag') + ' yet</h3>' +
+          '<p>' + (trade ? 'The quick order pad on the trade desk is the fastest way in.' : 'Every frame on the site comes with lenses in the price.') + '</p>' +
+          '<p style="margin-top:18px"><a class="btn btn-primary" href="' + (trade ? 'trade.html#quick' : 'shop.html?cat=frames') + '">' + (trade ? 'Open the quick order pad' : 'Shop eyeglasses') + '</a></p>' +
+        '</div>';
+      return;
+    }
+
+    var rx = Store.getRx();
+    var rxDone = Store.rxComplete(rx);
+    var upsell = CATALOG.bySku('A1-AC-8101');
+    var inBag = t.lines.some(function(l){ return l.sku === 'A1-AC-8101'; });
+
+    wrap.innerHTML =
+      '<div class="cart">' +
+        '<div>' +
+          '<h1 style="font-size:24px;margin-bottom:22px">' + (trade ? 'Your order' : 'Your bag') + ' · ' + t.itemCount + ' item' + (t.itemCount === 1 ? '' : 's') + '</h1>' +
+          t.lines.map(function(l){
+            var p = l.product;
+            var lensSel = l.lens
+              ? '<select data-act="lens" aria-label="Lens package">' + SITE.lensPackages().map(function(x){
+                  var d = Store.lensDelta(p, x.id);
+                  return '<option value="' + esc(x.id) + '"' + (x.id === l.lens.id ? ' selected' : '') + '>' + esc(x.label) + (d ? ' (' + (d > 0 ? '+' : '') + Store.rupees(d) + ')' : '') + '</option>';
+                }).join('') + '</select>'
+              : '';
+            var size = CATALOG.dims(l.variant) ? CATALOG.sizeLabel(p, l.variant.id) : l.variant.label;
+            var chips = '';
+            if (l.needsRx && !trade) chips += rxDone
+              ? '<span class="chip teal"><i class="fa-solid fa-check"></i>&nbsp;Prescription saved</span>'
+              : '<span class="chip amber">Prescription needed</span><a href="checkout.html" style="font-size:12.5px;font-weight:600;color:var(--teal)">Add now</a>';
+            if (l.free) chips += '<span class="chip teal">' + esc(Store.bogoRule().label) + ' applied</span>';
+            else if (l.bogo && !l.free) chips += '<span class="chip grey">' + esc(Store.bogoRule().label) + ' · add a second to get it free</span>';
+            return '<div class="line" data-id="' + esc(l.id) + '">' +
+              '<a class="line-media" href="product.html?sku=' + encodeURIComponent(l.sku) + '">' +
+                '<img src="' + CATALOG.img(p.photo) + '" alt="' + esc(p.name) + '" loading="lazy" decoding="async">' +
+              '</a>' +
+              '<div class="line-body">' +
+                '<span class="line-brand">' + esc(p.brand) + (trade ? ' · ' + esc(p.sku) : '') + '</span>' +
+                '<span class="line-name">' + esc(p.name) + (p.colour ? ' · ' + esc(p.colour.label) : '') + '</span>' +
+                '<span class="line-var">' + (lensSel ? lensSel + ' · ' : '') + esc(size) + (trade ? ' · ' + Store.rupees(l.unit) + '/' + esc(p.unit) : (l.qty > 1 ? ' · ' + Store.rupees(l.unit) + ' each' : '')) + '</span>' +
+                '<div class="line-row">' +
+                  '<div class="qty sm"><button type="button" data-act="dec" aria-label="Reduce quantity">−</button><input class="tnum" data-act="set" value="' + l.qty + '" inputmode="numeric" aria-label="Quantity"><button type="button" data-act="inc" aria-label="Increase quantity">+</button></div>' +
+                  chips +
+                '</div>' +
+              '</div>' +
+              '<div class="line-amt">' +
+                (l.free === l.qty ? '<b class="free">Free</b><s>' + Store.rupees(l.gross) + '</s>'
+                  : '<b>' + Store.rupees(l.net) + '</b>' + (l.discount ? '<s>' + Store.rupees(l.gross) + '</s>' : (!trade && p.mrp > l.unit && l.qty === 1 ? '<s>' + Store.rupees(p.mrp) + '</s>' : ''))) +
+                '<button class="line-rm" data-act="rm">Remove</button>' +
+              '</div>' +
+            '</div>';
+          }).join('') +
+          (!trade && upsell && !inBag && upsell.stock > 0 ?
+          '<div class="upsell">' +
+            '<div><b>Add a ' + esc(upsell.name.toLowerCase()) + '</b><span>' + esc(upsell.blurb.split('.')[0]) + '</span></div>' +
+            '<div class="r"><b>' + Store.rupees(Store.displayPrice(upsell)) + '</b><button type="button" class="btn btn-ghost" id="addUpsell">Add</button></div>' +
+          '</div>' : '') +
+        '</div>' +
+
+        '<aside>' +
+          '<div class="panel sticky">' +
+            '<h3>Summary</h3>' +
+            '<div class="sum"><span>' + (trade ? t.itemCount + ' units' : 'Frames and lenses') + '</span><span>' + Store.rupees(t.gross) + '</span></div>' +
+            (t.discount ? '<div class="sum"><span>' + esc(Store.bogoRule().label) + ' discount</span><span class="teal">−' + Store.rupees(t.discount) + '</span></div>' : '') +
+            (trade ? '<div class="sum muted"><span>Taxable value</span><span>' + Store.rupees(t.base) + '</span></div>' +
+              Object.keys(t.byRate).sort().map(function(r){ return '<div class="sum muted"><span>GST at ' + r + '%</span><span>' + Store.rupees(t.byRate[r]) + '</span></div>'; }).join('') : '') +
+            '<div class="sum"><span>Delivery</span><span' + (t.shipping === 0 ? ' class="teal"' : '') + '>' + (t.shipping === 0 ? 'Free' : Store.rupees(t.shipping)) + '</span></div>' +
+            '<div class="sum total"><span>To pay</span><span>' + Store.rupees(t.total) + '</span></div>' +
+            (t.freeShippingGap > 0 ? '<div class="ship-hint">Add ' + Store.rupees(t.freeShippingGap) + ' more for free delivery</div>' : '') +
+            (t.belowMin ? '<div class="ship-hint" style="background:var(--amber-bg);color:var(--amber)">Trade orders start at ' + Store.rupees(t.minOrder) + '. Add ' + Store.rupees(t.minOrder - t.net) + ' more to continue.</div>' : '') +
+            '<a class="btn btn-primary btn-block btn-lg" href="checkout.html" style="margin-top:18px' + (t.belowMin ? ';pointer-events:none;background:var(--grey);color:var(--muted)' : '') + '">' +
+              (trade ? 'Continue to delivery' : t.rxNeeded && !rxDone ? 'Continue to prescription' : 'Continue to delivery') + '</a>' +
+            '<a class="btn btn-soft btn-block" href="' + (trade ? 'shop.html' : 'shop.html?cat=frames') + '" style="margin-top:10px">Keep shopping</a>' +
+            '<p class="fine">' + (trade ? 'Prices include GST. A GST invoice with your GSTIN is issued with every order.' : 'Nothing is cut until your power is confirmed. Change it free within 24 hours.') + '</p>' +
+          '</div>' +
+        '</aside>' +
+      '</div>';
+
+    var au = document.getElementById('addUpsell');
+    if (au) au.addEventListener('click', function(){ Store.add(upsell.sku, upsell.variants[0].id, 1); window.toast(upsell.name + ' added'); });
+  }
+
+  /* One delegated listener for the whole bag rather than three per line —
+     the list is re-rendered on every change, and per-line handlers would be
+     re-bound each time. */
+  document.getElementById('cartWrap').addEventListener('click', function(e){
+    var btn = e.target.closest('[data-act]');
+    if (!btn || btn.tagName === 'SELECT' || btn.tagName === 'INPUT') return;
+    var row = btn.closest('.line');
+    if (!row) return;
+    var id = row.getAttribute('data-id');
+    var act = btn.getAttribute('data-act');
+    var cur = Store.lines().filter(function(l){ return l.id === id; })[0];
+    if (!cur) return;
+    if (act === 'inc') Store.setQty(id, cur.qty + 1);
+    if (act === 'dec') Store.setQty(id, cur.qty - 1);
+    if (act === 'rm'){ Store.remove(id); window.toast('Removed from your ' + (trade ? 'order' : 'bag'), 'fa-circle-minus'); }
+  });
+
+  document.getElementById('cartWrap').addEventListener('change', function(e){
+    var row = e.target.closest('.line');
+    if (!row) return;
+    var id = row.getAttribute('data-id');
+    if (e.target.matches('input[data-act="set"]')) Store.setQty(id, parseInt(e.target.value, 10));
+    if (e.target.matches('select[data-act="lens"]')) { Store.setLens(id, e.target.value); window.toast('Lens changed'); }
+  });
+
+  Store.onChange(render);
+  render();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Checkout — A1 Opticals</title>
+<meta name="theme-color" content="#14181A">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="stylesheet" href="store.css">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%2314181A'/><text x='50' y='67' text-anchor='middle' font-family='Helvetica,Arial,sans-serif' font-size='48' font-weight='700' fill='%23FFFFFF'>A1</text></svg>">
+</head>
+<body data-page="checkout.html">
+<div id="chrome-top"></div>
+
+<main id="main">
+  <div class="wrap">
+    <div class="steps" id="steps"></div>
+    <div id="wrap"></div>
+  </div>
+</main>
+
+<div id="chrome-foot"></div>
+
+<script src="catalog.js"></script>
+<script src="site.js"></script>
+<script src="store.js"></script>
+<script src="chrome.js"></script>
+<script>
+(function(){
+  'use strict';
+  var esc = window.escapeHtml;
+  var trade = Store.isTrade();
+  var wrap = document.getElementById('wrap');
+  var t = Store.totals();
+
+  if (!t.lines.length){
+    document.getElementById('steps').hidden = true;
+    wrap.innerHTML =
+      '<div class="empty"><h3>Your ' + (trade ? 'order pad' : 'bag') + ' is empty</h3>' +
+      '<p>Add something from the shop first.</p>' +
+      '<p style="margin-top:18px"><a class="btn btn-primary" href="shop.html">Go to the shop</a></p></div>';
+    return;
+  }
+
+  /* ── the flow ──────────────────────────────────────────────────────────────
+     Retail: Bag → Prescription (only if a powered lens or contact lenses are
+     in the bag) → Delivery → Payment. Trade: Order → Delivery → Payment, with
+     the Rx grid for made-to-order lenses inside the delivery step, as before. */
+  var STEPS = trade ? ['delivery', 'payment'] : (t.rxNeeded ? ['rx', 'delivery', 'payment'] : ['delivery', 'payment']);
+  var LABELS = { bag: trade ? 'Order' : 'Bag', rx: 'Prescription', delivery: 'Delivery', payment: 'Payment' };
+  /* A saved prescription pre-fills the step rather than skipping it — the
+     customer confirms the power they are paying for, one click to continue. */
+  var step = STEPS[0];
+
+  /* Everything the customer types, kept while they move between steps. */
+  var saved = Store.getUser() || {};
+  var d = {
+    shop: saved.shop || '', gstin: saved.gstin || '', wantGst: !!saved.gstin && !trade,
+    name: saved.name || '', phone: saved.phone || '', email: saved.email || '',
+    address: saved.address || '', city: saved.city || '', pin: saved.pin || '',
+    slot: '', collect: false, store: (SITE.stores()[0] || {}).id, po: '', notes: '', labNotes: ''
+  };
+  var method = 'UPI';
+
+  function area(){ return Store.serviceArea(d.pin); }
+  function deliveryMethod(){
+    if (d.collect) return 'collect';
+    var a = area();
+    if (a && !a.van && !trade && SITE.get('delivery').retail.courierOutside) return 'courier';
+    return 'van';
+  }
+  function tot(){ return Store.totals({ method: deliveryMethod() }); }
+
+  function paintSteps(){
+    var all = ['bag'].concat(STEPS);
+    var idx = all.indexOf(step);
+    document.getElementById('steps').innerHTML = all.map(function(s, i){
+      var cls = i < idx ? 'done' : i === idx ? 'on' : '';
+      return '<div class="step ' + cls + '"><b>' + (i < idx ? '<i class="fa-solid fa-check" style="font-size:10px"></i>' : i + 1) + '</b><span>' + LABELS[s] + '</span></div>';
+    }).join('');
+  }
+
+  function go(s){ step = s; paint(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+
+  function field(id, label, attrs, value, tag, hint){
+    return '<div class="field"><label for="' + id + '">' + label + '</label>' +
+      (tag === 'textarea'
+        ? '<textarea id="' + id + '" ' + attrs + '>' + esc(value || '') + '</textarea>'
+        : '<input id="' + id + '" ' + attrs + ' value="' + esc(value || '') + '">') +
+      (hint ? '<span class="hint">' + hint + '</span>' : '') +
+      '<span class="err" hidden></span></div>';
+  }
+
+  /* ── Step: prescription ── */
+  function rxStep(){
+    var rx = Store.getRx() || { method: 'typed', od: {}, os: {}, pd: {} };
+    if (!rx.od) rx.od = {}; if (!rx.os) rx.os = {}; if (!rx.pd) rx.pd = {};
+    var m = rx.method === 'later' ? 'typed' : rx.method || 'typed';
+    var powered = t.lines.filter(function(l){ return l.needsRx; });
+    var names = powered.map(function(l){ return l.product.name + (l.product.colour ? ' · ' + l.product.colour.label : ''); });
+    var hasContacts = powered.some(function(l){ return l.product.cat === 'contacts'; });
+    var lensIds = powered.map(function(l){ return l.lensId; });
+
+    return '<div>' +
+      '<h1 style="font-size:24px;margin-bottom:6px">Your prescription</h1>' +
+      '<p style="color:var(--ink-2);font-size:14px;margin-bottom:22px">For ' + esc(names.join(' and ')) + '. One power applies to ' + (names.length > 1 ? 'all of them' : 'it') + ' unless you tell us otherwise in the notes below.</p>' +
+      '<div class="seg" id="rxSeg" style="margin-bottom:18px">' +
+        '<button type="button" data-m="typed" aria-pressed="' + (m === 'typed') + '">Type it in</button>' +
+        '<button type="button" data-m="photo" aria-pressed="' + (m === 'photo') + '">Upload a photo</button>' +
+        '<button type="button" data-m="call" aria-pressed="' + (m === 'call') + '">Call me for it</button>' +
+      '</div>' +
+      '<div class="rx-form" id="rxTyped"' + (m === 'typed' ? '' : ' hidden') + '>' +
+        '<div class="rx-table">' +
+          '<span></span><span class="h">SPH</span><span class="h">CYL</span><span class="h">AXIS</span><span class="h">ADD</span>' +
+          '<span class="eye">Right</span><input id="odS" inputmode="decimal" placeholder="−2.25" value="' + esc(rx.od.sph || '') + '"><input id="odC" inputmode="decimal" placeholder="−0.50" value="' + esc(rx.od.cyl || '') + '"><input id="odA" inputmode="numeric" placeholder="180" value="' + esc(rx.od.axis || '') + '"><input id="odD" inputmode="decimal" placeholder="—" value="' + esc(rx.od.add || '') + '"' + (lensIds.indexOf('prog') === -1 ? ' class="na" title="Only for progressive lenses"' : '') + '>' +
+          '<span class="eye">Left</span><input id="osS" inputmode="decimal" placeholder="−1.75" value="' + esc(rx.os.sph || '') + '"><input id="osC" inputmode="decimal" placeholder="−0.25" value="' + esc(rx.os.cyl || '') + '"><input id="osA" inputmode="numeric" placeholder="175" value="' + esc(rx.os.axis || '') + '"><input id="osD" inputmode="decimal" placeholder="—" value="' + esc(rx.os.add || '') + '"' + (lensIds.indexOf('prog') === -1 ? ' class="na" title="Only for progressive lenses"' : '') + '>' +
+        '</div>' +
+        '<label class="check"><input type="checkbox" id="pdOn"' + (rx.pd.on ? ' checked' : '') + '><span>I know my pupillary distance (PD)</span> <button type="button" class="linkish" id="pdWhat" style="font-size:12.5px">What’s this?</button></label>' +
+        '<div class="row2" id="pdRow"' + (rx.pd.on ? '' : ' hidden') + '><div class="field" style="margin:0"><label for="pdR">PD right (mm)</label><input id="pdR" inputmode="decimal" placeholder="31.5" value="' + esc(rx.pd.r || '') + '"></div><div class="field" style="margin:0"><label for="pdL">PD left (mm)</label><input id="pdL" inputmode="decimal" placeholder="31.5" value="' + esc(rx.pd.l || '') + '"></div></div>' +
+        '<div id="advice"></div>' +
+        (hasContacts ? '<p class="hint" style="font-size:12.5px;color:var(--muted)">For contact lenses we convert your spectacle power, or give us the contact-lens power directly in the notes.</p>' : '') +
+      '</div>' +
+      '<div class="rx-form" id="rxPhoto"' + (m === 'photo' ? '' : ' hidden') + '>' +
+        '<div class="upload">' +
+          (rx.photo ? '<img id="rxPreview" src="' + rx.photo + '" alt="Your prescription">' : '<i class="fa-solid fa-camera" style="font-size:22px;color:var(--muted)"></i>') +
+          '<p>A clear photo of the prescription from your eye test. We read it and confirm the power on WhatsApp before cutting.</p>' +
+          '<label class="btn btn-soft" style="cursor:pointer">' + (rx.photo ? 'Replace photo' : 'Choose a photo') + '<input type="file" id="rxFile" accept="image/*" hidden></label>' +
+        '</div>' +
+      '</div>' +
+      '<div class="rx-form" id="rxCall"' + (m === 'call' ? '' : ' hidden') + '>' +
+        '<p style="font-size:14px;color:var(--ink-2)">We ring you within an hour of the order (10 am – 8 pm) and take the power over the phone. Nothing is cut until then. If you have had an eye test with us, we already have it on file.</p>' +
+      '</div>' +
+      '<div class="field" style="margin-top:18px"><label for="labNotes">Notes for the lab (optional)</label><textarea id="labNotes" rows="2" placeholder="e.g. the second pair is for my daughter, power −1.00 both eyes">' + esc(d.labNotes) + '</textarea></div>' +
+      '<p class="err" id="rxErr" hidden style="color:#B3261E;font-size:13px;margin:-6px 0 12px"></p>' +
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">' +
+        '<button type="button" class="btn btn-primary btn-lg" id="rxNext">Continue to delivery</button>' +
+        '<button type="button" class="linkish" id="rxSkip" style="font-size:13.5px">Add it after payment instead</button>' +
+      '</div>' +
+      '<p class="fine" style="text-align:left;margin-top:14px">Prefer to hand it over in person? Choose “collect from store” on the next step and bring it with you.</p>' +
+    '</div>';
+  }
+
+  function wireRx(){
+    var m = (Store.getRx() || {}).method || 'typed';
+    if (m === 'later') m = 'typed';
+    var seg = document.getElementById('rxSeg');
+    seg.querySelectorAll('button').forEach(function(b){
+      b.addEventListener('click', function(){
+        m = b.getAttribute('data-m');
+        seg.querySelectorAll('button').forEach(function(o){ o.setAttribute('aria-pressed', String(o === b)); });
+        document.getElementById('rxTyped').hidden = m !== 'typed';
+        document.getElementById('rxPhoto').hidden = m !== 'photo';
+        document.getElementById('rxCall').hidden = m !== 'call';
+      });
+    });
+    document.getElementById('pdOn').addEventListener('change', function(e){ document.getElementById('pdRow').hidden = !e.target.checked; });
+    document.getElementById('pdWhat').addEventListener('click', function(){
+      window.modal('<h2>Pupillary distance</h2><p>The distance between the centres of your pupils, in millimetres — usually 54 to 68 for adults. It centres the lens on your eye. It is on most prescriptions as “PD”; if it is not, leave the box unticked and we measure it from a photo we ask for on WhatsApp, or in store.</p><div class="actions"><button type="button" class="btn btn-primary" data-close>Got it</button></div>');
+    });
+    var adviceEl = document.getElementById('advice');
+    function advise(){
+      var rx = readTyped();
+      var weakest = t.lines.filter(function(l){ return l.needsRx && l.lensId; }).map(function(l){ return l.lensId; });
+      var a = Store.lensAdvice(rx, weakest.indexOf('thin') > -1 || weakest.indexOf('prog') > -1 ? 'thin' : (weakest[0] || 'sv'));
+      adviceEl.innerHTML = a ? '<div class="advice ' + a.level + '">' + esc(a.text) + (a.level === 'warn' ? ' <a href="cart.html" style="font-weight:600;text-decoration:underline">Change lens in the bag</a>' : '') + '</div>' : '';
+    }
+    ['odS','osS'].forEach(function(id){ document.getElementById(id).addEventListener('input', advise); });
+    advise();
+
+    var rxFile = document.getElementById('rxFile');
+    var photo = (Store.getRx() || {}).photo || '';
+    rxFile.addEventListener('change', function(e){
+      var file = e.target.files && e.target.files[0]; if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function(){
+        var im = new Image();
+        im.onload = function(){
+          var max = 1200, k = Math.min(1, max / Math.max(im.width, im.height));
+          var c = document.createElement('canvas'); c.width = Math.round(im.width * k); c.height = Math.round(im.height * k);
+          c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+          photo = c.toDataURL('image/jpeg', 0.8);
+          var up = document.querySelector('#rxPhoto .upload');
+          var old = up.querySelector('img, i'); if (old) old.remove();
+          var img = document.createElement('img'); img.src = photo; img.alt = 'Your prescription'; up.prepend(img);
+        };
+        im.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+    function readTyped(){
+      var g = function(id){ return document.getElementById(id).value.trim().replace(/−/g, '-'); };
+      return { method: 'typed', od: { sph: g('odS'), cyl: g('odC'), axis: g('odA'), add: g('odD') }, os: { sph: g('osS'), cyl: g('osC'), axis: g('osA'), add: g('osD') },
+               pd: { on: document.getElementById('pdOn').checked, r: g('pdR'), l: g('pdL') } };
+    }
+    document.getElementById('rxNext').addEventListener('click', function(){
+      var err = document.getElementById('rxErr');
+      d.labNotes = document.getElementById('labNotes').value.trim();
+      var rx;
+      if (m === 'typed') {
+        rx = readTyped();
+        if (isNaN(parseFloat(rx.od.sph)) || isNaN(parseFloat(rx.os.sph))) { err.hidden = false; err.textContent = 'SPH for both eyes, please — put 0.00 if there is none.'; return; }
+        if (Math.abs(parseFloat(rx.od.sph)) > 20 || Math.abs(parseFloat(rx.os.sph)) > 20) { err.hidden = false; err.textContent = 'That SPH looks wrong — powers are usually between −10.00 and +6.00.'; return; }
+      } else if (m === 'photo') {
+        if (!photo) { err.hidden = false; err.textContent = 'Choose a photo first, or type the power instead.'; return; }
+        rx = { method: 'photo', photo: photo, od: {}, os: {}, pd: {} };
+      } else rx = { method: 'call', od: {}, os: {}, pd: {} };
+      Store.setRx(rx);
+      go('delivery');
+    });
+    document.getElementById('rxSkip').addEventListener('click', function(){
+      d.labNotes = document.getElementById('labNotes').value.trim();
+      Store.setRx({ method: 'later', od: {}, os: {}, pd: {} });
+      go('delivery');
+    });
+  }
+
+  /* ── Step: delivery ── */
+  function deliveryStep(){
+    var slots = SITE.get('delivery').slots;
+    var stores = SITE.stores();
+    return '<div>' +
+      '<h1 style="font-size:24px;margin-bottom:22px">Delivery</h1>' +
+      '<form id="dForm" novalidate>' +
+        (trade ?
+        '<div class="panel" style="margin-bottom:18px">' +
+          '<h3><span class="pn">1</span> Your shop</h3>' +
+          '<div class="row2">' +
+            field('cShop', 'Shop / clinic name', 'name="shop" autocomplete="organization" required', d.shop) +
+            field('cGstin', 'GSTIN — goes on your invoice', 'name="gstin" autocomplete="off" required placeholder="04AAAAA0000A1Z5" style="text-transform:uppercase"', d.gstin) +
+          '</div>' +
+          '<div class="row2">' +
+            field('cName', 'Contact person', 'name="name" autocomplete="name" required', d.name) +
+            field('cPhone', 'Mobile — WhatsApp updates go here', 'name="phone" type="tel" autocomplete="tel" required', d.phone) +
+          '</div>' +
+          field('cEmail', 'Email — the invoice goes here', 'name="email" type="email" autocomplete="email" required', d.email) +
+        '</div>'
+        :
+        '<div class="panel" style="margin-bottom:18px">' +
+          '<h3><span class="pn">1</span> Contact</h3>' +
+          '<div class="row2">' +
+            field('cName', 'Your name', 'name="name" autocomplete="name" required', d.name) +
+            field('cPhone', 'Mobile — WhatsApp updates go here', 'name="phone" type="tel" autocomplete="tel" required', d.phone) +
+          '</div>' +
+          field('cEmail', 'Email — for the receipt', 'name="email" type="email" autocomplete="email" required', d.email) +
+          '<label class="check"><input type="checkbox" id="wantGst"' + (d.wantGst ? ' checked' : '') + '><span>I need a GST invoice in a business name</span></label>' +
+          '<div class="row2" id="gstRow" style="margin-top:12px"' + (d.wantGst ? '' : ' hidden') + '>' +
+            field('cShop', 'Business name', 'name="shop" autocomplete="organization"', d.shop) +
+            field('cGstin', 'GSTIN', 'name="gstin" autocomplete="off" placeholder="04AAAAA0000A1Z5" style="text-transform:uppercase"', d.gstin) +
+          '</div>' +
+        '</div>') +
+
+        '<div class="panel">' +
+          '<h3><span class="pn">2</span> ' + (trade ? 'Delivery' : 'Where to') + '</h3>' +
+          '<div class="seg" id="how" style="margin-bottom:16px">' +
+            '<button type="button" data-how="deliver" aria-pressed="' + !d.collect + '"><i class="fa-solid fa-truck"></i>&nbsp; Deliver to me</button>' +
+            '<button type="button" data-how="collect" aria-pressed="' + d.collect + '"><i class="fa-solid fa-store"></i>&nbsp; Collect from store</button>' +
+          '</div>' +
+          '<div id="deliverBox"' + (d.collect ? ' hidden' : '') + '>' +
+            field('cAddr', 'Address', 'name="address" rows="3" autocomplete="street-address" required', d.address, 'textarea') +
+            '<div class="row2">' +
+              field('cCity', 'City', 'name="city" autocomplete="address-level2" required', d.city) +
+              field('cPin', 'PIN code', 'name="pin" inputmode="numeric" autocomplete="postal-code" required maxlength="6"', d.pin) +
+            '</div>' +
+            '<div class="pin-check" id="pinCheck" hidden></div>' +
+            '<div class="field" id="slotField"><label>Delivery slot</label>' +
+              '<div class="opt-row" id="slots" role="group" aria-label="Delivery slot">' +
+                slots.map(function(s, i){ return '<button type="button" class="opt-btn" data-s="' + esc(s) + '" aria-pressed="' + ((d.slot || slots[0]) === s) + '">' + esc(s) + '</button>'; }).join('') +
+              '</div>' +
+              '<span class="hint">' + (trade ? 'Same-day applies to stock orders placed before 2 pm. Rx lenses follow the lab, 3–4 working days.' : 'Frames with power are fitted first — allow 48 hours, then the slot you choose.') + '</span>' +
+            '</div>' +
+          '</div>' +
+          '<div id="collectBox"' + (d.collect ? '' : ' hidden') + '>' +
+            (stores.length > 1 ? '<div class="field"><label for="cStore">Store</label><select id="cStore">' + stores.map(function(s){ return '<option value="' + esc(s.id) + '"' + (s.id === d.store ? ' selected' : '') + '>' + esc(s.name + ', ' + s.city) + '</option>'; }).join('') + '</select></div>' : '') +
+            '<div class="note ok"><i class="fa-solid fa-store"></i><div><strong>' + esc(stores[0] ? stores[0].address : '') + '</strong><br>' + esc(stores[0] ? stores[0].hours : '') + '. Ready ' + (trade ? 'today for stock, or when the lab is done' : 'in 48 hours for powered lenses, same day for everything else') + ' — we WhatsApp you. No delivery charge.</div></div>' +
+          '</div>' +
+          '<div class="row2" style="margin-top:14px">' +
+            field('cPo', trade ? 'Your PO / reference (optional)' : 'Gift note (optional)', 'name="po" autocomplete="off"', d.po) +
+            field('cNotes', trade ? 'Notes for the packer (optional)' : 'Notes for delivery (optional)', 'name="notes" autocomplete="off" placeholder="e.g. call before delivery"', d.notes) +
+          '</div>' +
+        '</div>' +
+        (trade && t.lines.some(function(l){ return l.product.rx; }) ?
+        '<div class="panel" style="margin-top:18px"><h3><span class="pn">3</span> Prescription for Rx lenses</h3>' +
+          '<p style="font-size:13.5px;color:var(--ink-2);margin-bottom:12px">Per line. Attach the frame trace and fitting height by email after the order, quoting the reference.</p>' +
+          t.lines.filter(function(l){ return l.product.rx; }).map(function(l){
+            return '<div style="margin-bottom:12px"><div class="mono" style="margin-bottom:8px">' + esc(l.product.name) + ' · ' + esc(l.variant.label) + ' · ' + l.qty + ' pair</div>' +
+              '<div class="rx-grid"><table><thead><tr><th></th><th>SPH</th><th>CYL</th><th>AXIS</th><th>ADD</th><th>PD</th></tr></thead><tbody>' +
+              ['R','L'].map(function(e){ return '<tr><td class="mono">' + e + '</td>' + [1,2,3,4,5].map(function(){ return '<td><input inputmode="decimal" placeholder="0.00"></td>'; }).join('') + '</tr>'; }).join('') +
+              '</tbody></table></div></div>';
+          }).join('') +
+        '</div>' : '') +
+      '</form>' +
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:22px">' +
+        '<button type="button" class="btn btn-primary btn-lg" id="dNext">Continue to payment</button>' +
+        (STEPS[0] === 'rx' ? '<button type="button" class="linkish" id="dBack" style="font-size:13.5px">Back to prescription</button>' : '<a href="cart.html" class="linkish" style="font-size:13.5px">Back to ' + (trade ? 'order' : 'bag') + '</a>') +
+      '</div>' +
+    '</div>';
+  }
+
+  var RULES_RETAIL = {
+    cName:  { test: function(v){ return v.trim().length >= 2; }, msg: 'Who is this for?' },
+    cPhone: { test: function(v){ return /^[+ 0-9-]{10,15}$/.test(v.trim()); }, msg: 'A ten-digit mobile number' },
+    cEmail: { test: function(v){ return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim()); }, msg: 'A valid email for the receipt' }
+  };
+  var RULES_ADDR = {
+    cAddr:  { test: function(v){ return v.trim().length >= 10; }, msg: 'A full address, please' },
+    cCity:  { test: function(v){ return v.trim().length >= 2; }, msg: 'Which city?' },
+    cPin:   { test: function(v){ var a = Store.serviceArea(v); return !!a && (a.van || (!trade && SITE.get('delivery').retail.courierOutside)); }, msg: trade ? 'A six-digit PIN inside our delivery area' : 'A six-digit PIN code' }
+  };
+  var RULES_GST = {
+    cShop:  { test: function(v){ return v.trim().length >= 2; }, msg: 'The name on the invoice' },
+    cGstin: { test: function(v){ return /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(v.trim().toUpperCase()); }, msg: '15 characters, e.g. 04AAAAA0000A1Z5' }
+  };
+
+  function wireDelivery(){
+    var wg = document.getElementById('wantGst');
+    if (wg) wg.addEventListener('change', function(){ d.wantGst = wg.checked; document.getElementById('gstRow').hidden = !wg.checked; });
+    var b = document.getElementById('dBack');
+    if (b) b.addEventListener('click', function(){ go('rx'); });
+
+    document.querySelectorAll('#how button').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        d.collect = btn.getAttribute('data-how') === 'collect';
+        document.querySelectorAll('#how button').forEach(function(o){ o.setAttribute('aria-pressed', String(o === btn)); });
+        document.getElementById('deliverBox').hidden = d.collect;
+        document.getElementById('collectBox').hidden = !d.collect;
+        paintSummary();
+      });
+    });
+    var slotsEl = document.getElementById('slots');
+    d.slot = d.slot || SITE.get('delivery').slots[0];
+    slotsEl.querySelectorAll('.opt-btn').forEach(function(s){
+      s.addEventListener('click', function(){
+        d.slot = s.getAttribute('data-s');
+        slotsEl.querySelectorAll('.opt-btn').forEach(function(o){ o.setAttribute('aria-pressed', String(o === s)); });
+      });
+    });
+
+    /* PIN gate — checked as they type, not at the end */
+    var pinBox = document.getElementById('pinCheck');
+    var contact = SITE.get('contact');
+    function checkPin(){
+      var v = document.getElementById('cPin').value.trim();
+      d.pin = v;
+      var a = Store.serviceArea(v);
+      if (a === null) { pinBox.hidden = true; paintSummary(); return; }
+      pinBox.hidden = false;
+      var rule = SITE.get('delivery').retail;
+      if (a.van) {
+        pinBox.className = 'pin-check ok';
+        pinBox.innerHTML = '<i class="fa-solid fa-circle-check"></i><div><b>' + esc(a.area) + '</b> — delivered by our own van. ' + (trade ? 'Free above ' + Store.rupees(SITE.get('delivery').trade.freeOver) + '.' : 'Free above ' + Store.rupees(rule.freeOver) + '.') + '</div>';
+        document.getElementById('slotField').hidden = false;
+      } else if (!trade && rule.courierOutside) {
+        pinBox.className = 'pin-check courier';
+        pinBox.innerHTML = '<i class="fa-solid fa-truck-fast"></i><div><b>Outside our van area</b> — sent by courier, ' + esc(rule.courierDays) + '. ' + (rule.courierFlat ? Store.rupees(rule.courierFlat) + ', free above ' + Store.rupees(rule.freeOver) + '.' : 'Free.') + '</div>';
+        document.getElementById('slotField').hidden = true;
+      } else {
+        pinBox.className = 'pin-check bad';
+        pinBox.innerHTML = '<i class="fa-solid fa-circle-xmark"></i><div><b>Outside our delivery area.</b> We deliver in ' + esc(Store.areaNames().join(', ')) + ' for now. For ' + esc(v) + ', call <a href="' + esc(contact.phoneHref) + '">' + esc(contact.phone) + '</a> and we will quote a courier.</div>';
+      }
+      paintSummary();
+    }
+    document.getElementById('cPin').addEventListener('input', checkPin);
+    if (d.pin) checkPin();
+
+    /* Validation is per-field with a message attached to the field, not one
+       alert listing everything wrong. */
+    function rules(){
+      var r = {};
+      Object.assign(r, RULES_RETAIL);
+      if (!d.collect) Object.assign(r, RULES_ADDR);
+      if (trade || d.wantGst) Object.assign(r, RULES_GST);
+      return r;
+    }
+    function validate(showAll){
+      var ok = true, firstBad = null, R = rules();
+      Object.keys(R).forEach(function(id){
+        var input = document.getElementById(id); if (!input) return;
+        var f = input.closest('.field'), err = f.querySelector('.err');
+        var good = R[id].test(input.value);
+        if (!good){
+          ok = false; if (!firstBad) firstBad = input;
+          if (showAll || input.dataset.touched){ f.classList.add('bad'); err.textContent = R[id].msg; err.hidden = false; }
+        } else { f.classList.remove('bad'); err.hidden = true; }
+      });
+      return { ok: ok, firstBad: firstBad };
+    }
+    document.querySelectorAll('#dForm input, #dForm textarea').forEach(function(input){
+      input.addEventListener('blur', function(){ input.dataset.touched = '1'; validate(false); });
+      input.addEventListener('input', function(){ if (input.dataset.touched) validate(false); });
+    });
+
+    document.getElementById('dNext').addEventListener('click', function(){
+      var v = validate(true);
+      if (!v.ok){
+        v.firstBad.focus(); v.firstBad.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        window.toast('Some details still need filling in', 'fa-triangle-exclamation');
+        return;
+      }
+      var g = function(id){ var e = document.getElementById(id); return e ? e.value.trim() : ''; };
+      d.name = g('cName'); d.phone = g('cPhone'); d.email = g('cEmail');
+      d.shop = (trade || d.wantGst) ? g('cShop') : ''; d.gstin = (trade || d.wantGst) ? g('cGstin').toUpperCase() : '';
+      d.address = g('cAddr'); d.city = g('cCity'); d.pin = g('cPin'); d.po = g('cPo'); d.notes = g('cNotes');
+      var st = document.getElementById('cStore'); if (st) d.store = st.value;
+      Store.setUser({ shop: d.shop, gstin: d.gstin, name: d.name, phone: d.phone, email: d.email, address: d.address, city: d.city, pin: d.pin, trade: trade || (saved.trade || false) });
+      go('payment');
+    });
+  }
+
+  /* ── Step: payment ── */
+  function paymentStep(){
+    var a = area();
+    var cod = !trade && !d.collect && a && a.van;
+    var credit = trade && Store.orders().filter(function(o){ return o.mode === 'trade' && Store.statusOf(o) !== 'cancelled'; }).length >= 3;
+    return '<div>' +
+      '<h1 style="font-size:24px;margin-bottom:22px">Payment</h1>' +
+      '<div class="panel">' +
+        '<div class="pay-methods" id="methods" role="group" aria-label="Payment method">' +
+          '<label class="pm on"><input type="radio" name="pm" value="UPI" checked><i class="fa-solid fa-qrcode"></i><div><b>UPI</b><span>GPay, PhonePe, Paytm or any UPI app · no charge</span></div></label>' +
+          '<label class="pm"><input type="radio" name="pm" value="Card"><i class="fa-regular fa-credit-card"></i><div><b>Card</b><span>Visa, Mastercard, RuPay · via the payment gateway</span></div></label>' +
+          (cod ? '<label class="pm"><input type="radio" name="pm" value="Cash on delivery"><i class="fa-solid fa-money-bill-wave"></i><div><b>Pay on delivery</b><span>Cash or UPI to the driver · own-van area only</span></div></label>' : '') +
+          (d.collect && !trade ? '<label class="pm"><input type="radio" name="pm" value="Pay in store"><i class="fa-solid fa-store"></i><div><b>Pay in store</b><span>When you collect · we hold it for 7 days</span></div></label>' : '') +
+          '<label class="pm"><input type="radio" name="pm" value="Bank transfer"><i class="fa-solid fa-building-columns"></i><div><b>Bank transfer</b><span>NEFT / RTGS / IMPS · dispatched when the credit shows</span></div></label>' +
+          (trade ? '<label class="pm' + (credit ? '' : ' off') + '"><input type="radio" name="pm" value="Credit account"' + (credit ? '' : ' disabled') + '><i class="fa-solid fa-file-invoice-dollar"></i><div><b>Credit account · net-30</b><span>' + (credit ? 'Invoice due in 30 days' : 'Unlocks after your third paid order') + '</span></div></label>' : '') +
+        '</div>' +
+        '<p class="fine" style="text-align:left;margin-top:16px">Preview: no money moves. On the live platform UPI and cards open the payment gateway, and the payment is confirmed server-side, never by this page.</p>' +
+      '</div>' +
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:22px">' +
+        '<button type="button" class="btn btn-primary btn-lg" id="payBtn"><i class="fa-solid fa-lock"></i> <span id="payLabel"></span></button>' +
+        '<button type="button" class="linkish" id="pBack" style="font-size:13.5px">Back to delivery</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function wirePayment(){
+    function payLabel(){
+      var total = Store.rupees(tot().total);
+      document.getElementById('payLabel').textContent =
+        method === 'Bank transfer' ? 'Place order · pay ' + total + ' by transfer'
+        : method === 'Cash on delivery' || method === 'Pay in store' || method === 'Credit account' ? 'Place order · ' + total
+        : 'Pay ' + total + ' by ' + method;
+    }
+    document.querySelectorAll('#methods input[name=pm]').forEach(function(r){
+      r.addEventListener('change', function(){
+        method = r.value;
+        document.querySelectorAll('#methods .pm').forEach(function(l){ l.classList.toggle('on', l.querySelector('input').checked); });
+        payLabel();
+      });
+    });
+    payLabel();
+    document.getElementById('pBack').addEventListener('click', function(){ go('delivery'); });
+
+    document.getElementById('payBtn').addEventListener('click', function(){
+      var btn = this;
+      var tt = tot();
+      if (tt.belowMin) { window.toast('Trade orders start at ' + Store.rupees(tt.minOrder), 'fa-triangle-exclamation'); return; }
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> ' + (/UPI|Card/.test(method) ? 'Opening ' + method + '…' : 'Placing your order…');
+
+      var details = { shop: d.shop, gstin: d.gstin, name: d.name, phone: d.phone, email: d.email,
+        address: d.collect ? '' : d.address, city: d.collect ? '' : d.city, pin: d.collect ? '' : d.pin,
+        slot: d.collect ? 'Collect from store' : (deliveryMethod() === 'courier' ? 'Courier' : d.slot), po: d.po, notes: d.notes, labNotes: d.labNotes };
+      var a = area();
+      var delivery = { method: deliveryMethod(), area: a && a.area, slot: details.slot, store: d.collect ? d.store : null,
+        days: deliveryMethod() === 'courier' ? SITE.get('delivery').retail.courierDays : SITE.get('delivery').retail.vanDays };
+      var rx = tt.rxNeeded ? (Store.getRx() || { method: 'later', od: {}, os: {}, pd: {} }) : null;
+      if (rx && d.labNotes) rx.notes = d.labNotes;
+
+      Store.pay(details).then(function(payment){
+        payment.method = payment.simulated ? method + ' (preview)' : payment.method;
+        if (method === 'Bank transfer') payment.status = 'awaiting transfer';
+        if (method === 'Cash on delivery' || method === 'Pay in store') payment.status = 'pay on ' + (method === 'Pay in store' ? 'collection' : 'delivery');
+        if (method === 'Credit account') payment.status = 'on account';
+        var order = Store.placeOrder(details, payment, { delivery: delivery, rx: rx });
+        if (!order) throw new Error('order could not be created');
+        location.href = 'order.html?ref=' + encodeURIComponent(order.ref);
+      }).catch(function(err){
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-lock"></i> <span id="payLabel"></span>';
+        payLabel();
+        window.toast(err && err.message === 'cancelled' ? 'Payment cancelled' : 'That payment did not go through', 'fa-circle-xmark');
+      });
+    });
+  }
+
+  /* ── the summary, sticky on the right of every step ── */
+  function paintSummary(){
+    var tt = tot();
+    var rx = Store.getRx();
+    var host = document.getElementById('summary');
+    if (!host) return;
+    host.innerHTML =
+      '<h3>' + (trade ? 'Order summary' : 'Your bag') + '</h3>' +
+      tt.lines.map(function(l){
+        return '<div class="sum"><span>' + l.qty + ' × ' + esc(l.product.name) + (l.product.colour ? ' · ' + esc(l.product.colour.label) : '') +
+               '<small>' + esc(l.lens ? l.lens.label + ' · ' : '') + esc(CATALOG.dims(l.variant) ? CATALOG.sizeLabel(l.product, l.variant.id) : l.variant.label) + (trade ? ' · ' + Store.rupees(l.unit) + '/' + esc(l.product.unit) : '') + '</small></span>' +
+               '<span>' + (l.free === l.qty ? '<span class="teal">Free</span>' : Store.rupees(l.net)) + '</span></div>';
+      }).join('') +
+      (tt.discount ? '<div class="sum" style="border-top:1px solid var(--line);margin-top:6px;padding-top:10px"><span>' + esc(Store.bogoRule().label) + '</span><span class="teal">−' + Store.rupees(tt.discount) + '</span></div>' : '') +
+      (trade ? '<div class="sum muted" style="border-top:1px solid var(--line);margin-top:6px;padding-top:10px"><span>Taxable value</span><span>' + Store.rupees(tt.base) + '</span></div>' +
+        Object.keys(tt.byRate).sort().map(function(r){ return '<div class="sum muted"><span>GST at ' + r + '%</span><span>' + Store.rupees(tt.byRate[r]) + '</span></div>'; }).join('') : '') +
+      '<div class="sum"><span>Delivery' + (deliveryMethod() === 'collect' ? ' · collect' : deliveryMethod() === 'courier' ? ' · courier' : '') + '</span><span' + (tt.shipping === 0 ? ' class="teal"' : '') + '>' + (tt.shipping === 0 ? 'Free' : Store.rupees(tt.shipping)) + '</span></div>' +
+      '<div class="sum total"><span>' + (step === 'payment' ? 'To pay' : 'Order total') + '</span><span>' + Store.rupees(tt.total) + '</span></div>' +
+      (tt.rxNeeded ? '<div class="sum muted" style="margin-top:6px"><span>Prescription</span><span>' + (rx && Store.rxComplete(rx) ? (rx.method === 'typed' ? 'Saved' : rx.method === 'photo' ? 'Photo' : rx.method === 'call' ? 'By phone' : 'After payment') : 'Needed') + '</span></div>' : '') +
+      '<p class="fine">' + (trade ? 'A GST invoice with your GSTIN is emailed the moment the order is confirmed. WhatsApp updates at dispatch.' : 'Receipt by email, updates on WhatsApp. 14-day returns, including powered lenses.') + '</p>';
+  }
+
+  function paint(){
+    paintSteps();
+    wrap.innerHTML =
+      '<div class="cart" style="padding-top:0">' +
+        '<div id="stepHost">' + (step === 'rx' ? rxStep() : step === 'delivery' ? deliveryStep() : paymentStep()) + '</div>' +
+        '<aside><div class="panel sticky" id="summary"></div></aside>' +
+      '</div>';
+    paintSummary();
+    if (step === 'rx') wireRx();
+    if (step === 'delivery') wireDelivery();
+    if (step === 'payment') wirePayment();
+  }
+
+  paint();
+})();
+</script>
+</body>
+</html>

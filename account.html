@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Your account — A1 Opticals</title>
+<meta name="theme-color" content="#14181A">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="stylesheet" href="store.css">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%2314181A'/><text x='50' y='67' text-anchor='middle' font-family='Helvetica,Arial,sans-serif' font-size='48' font-weight='700' fill='%23FFFFFF'>A1</text></svg>">
+</head>
+<body data-page="account.html">
+<div id="chrome-top"></div>
+
+<main id="main">
+  <div class="wrap">
+    <div class="page-head" style="border:0">
+      <div class="crumb"><a href="index.html">Home</a> / Account</div>
+      <h1>Your account</h1>
+    </div>
+
+    <div class="note" style="margin:6px 0 26px">
+      <i class="fa-solid fa-circle-info"></i>
+      <div>In this preview, orders, your prescription and saved details live in <strong>this browser only</strong>.
+      On the live store they sit behind a phone-OTP login, so they follow you between your phone and your laptop.</div>
+    </div>
+
+    <div class="tabs" role="tablist" id="tabs">
+      <button class="tab" role="tab" aria-selected="true" data-t="orders">Orders</button>
+      <button class="tab" role="tab" aria-selected="false" data-t="rx">Prescription</button>
+      <button class="tab" role="tab" aria-selected="false" data-t="details">Saved details</button>
+      <button class="tab" role="tab" aria-selected="false" data-t="visits">Reservations &amp; eye tests</button>
+    </div>
+    <div id="wrap"></div>
+  </div>
+</main>
+
+<div id="chrome-foot"></div>
+
+<script src="catalog.js"></script>
+<script src="site.js"></script>
+<script src="store.js"></script>
+<script src="chrome.js"></script>
+<script>
+(function(){
+  'use strict';
+  var esc = window.escapeHtml;
+  var wrap = document.getElementById('wrap');
+  var fmt = { day: 'numeric', month: 'long', year: 'numeric' };
+
+  function ordersTab(){
+    var orders = Store.orders();
+    if (!orders.length){
+      return '<div class="empty"><h3>No orders yet</h3>' +
+        '<p>When you place one it will appear here with its receipt and tracking.</p>' +
+        '<p style="margin-top:18px"><a class="btn btn-primary" href="shop.html">Go to the shop</a></p></div>';
+    }
+    return orders.map(function(o){
+      var when = new Date(o.placedAt);
+      var st = Store.statusOf(o);
+      var rxMissing = o.items.some(function(i){ return i.needsRx; }) && (!o.rx || o.rx.method === 'later');
+      return '<div class="panel" style="margin-bottom:14px">' +
+        '<div style="display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; align-items:baseline">' +
+          '<div>' +
+            '<div class="mono">' + esc(o.ref) + (o.mode === 'trade' ? ' · trade' : '') + '</div>' +
+            '<h3 style="margin:6px 0 0">' + Store.rupees(o.total) + '</h3>' +
+            '<div style="color:var(--muted); font-size:13.5px; margin-top:4px">' +
+              when.toLocaleDateString('en-IN', fmt) + ' · ' + o.items.reduce(function(n,i){ return n + i.qty; }, 0) + ' item' + (o.items.reduce(function(n,i){ return n + i.qty; }, 0) === 1 ? '' : 's') +
+              (o.delivery && o.delivery.method === 'collect' ? ' · collect from store' : '') +
+            '</div>' +
+          '</div>' +
+          '<span class="pill ' + (st === 'delivered' ? 'ok' : st === 'cancelled' ? 'grey' : st === 'awaiting prescription' ? 'warn' : 'ok') + '">' + esc(st) + '</span>' +
+        '</div>' +
+        (rxMissing ? '<div class="note" style="margin-top:14px"><i class="fa-solid fa-glasses"></i><div>This order needs your prescription before the lab starts. <button type="button" class="linkish" data-rx-for="' + esc(o.ref) + '">Add it now</button></div></div>' : '') +
+        '<div style="display:flex; gap:10px; margin:16px 0; flex-wrap:wrap">' +
+          o.items.map(function(i){
+            return '<img src="' + CATALOG.img(i.photo) + '" alt="' + esc(i.name) + '" title="' + esc(i.name) + '" loading="lazy" decoding="async" style="width:64px; height:48px; object-fit:cover; border:1px solid var(--line)">';
+          }).join('') +
+        '</div>' +
+        '<div style="display:flex; gap:10px; flex-wrap:wrap">' +
+          '<a class="btn btn-soft btn-sm" href="track.html?ref=' + encodeURIComponent(o.ref) + '">Track</a>' +
+          '<a class="btn btn-soft btn-sm" href="order.html?ref=' + encodeURIComponent(o.ref) + '">' + (o.mode === 'trade' || (o.customer && o.customer.gstin) ? 'View invoice' : 'View receipt') + '</a>' +
+          '<button class="btn btn-soft btn-sm" data-reorder="' + esc(o.ref) + '">Order again</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  function rxTab(){
+    var rx = Store.getRx();
+    if (!rx || !Store.rxComplete(rx) || rx.method === 'later') {
+      return '<div class="panel" style="max-width:640px">' +
+        '<h3>No prescription saved</h3>' +
+        '<p style="color:var(--ink-2);font-size:14px;margin-bottom:16px">Save it once and every pair you order is cut to it. Type it from your last eye test, or <a href="eye-test.html" style="color:var(--teal);font-weight:600">book a free test</a> and we save it for you.</p>' +
+        '<button type="button" class="btn btn-primary" id="rxAdd">Add my prescription</button>' +
+      '</div>';
+    }
+    return '<div class="panel" style="max-width:640px">' +
+      '<h3>Your prescription</h3>' +
+      (rx.method === 'typed' ?
+        '<div class="table-wrap" style="margin-bottom:14px"><table style="min-width:0"><thead><tr><th></th><th>SPH</th><th>CYL</th><th>AXIS</th><th>ADD</th></tr></thead><tbody>' +
+          '<tr><td><b>Right</b></td><td class="tnum">' + esc(Store.fmtPow(rx.od.sph)) + '</td><td class="tnum">' + esc(rx.od.cyl ? Store.fmtPow(rx.od.cyl) : '—') + '</td><td class="tnum">' + esc(rx.od.axis || '—') + '</td><td class="tnum">' + esc(rx.od.add ? Store.fmtPow(rx.od.add) : '—') + '</td></tr>' +
+          '<tr><td><b>Left</b></td><td class="tnum">' + esc(Store.fmtPow(rx.os.sph)) + '</td><td class="tnum">' + esc(rx.os.cyl ? Store.fmtPow(rx.os.cyl) : '—') + '</td><td class="tnum">' + esc(rx.os.axis || '—') + '</td><td class="tnum">' + esc(rx.os.add ? Store.fmtPow(rx.os.add) : '—') + '</td></tr>' +
+        '</tbody></table></div>' +
+        (rx.pd && rx.pd.on && rx.pd.r ? '<p style="font-size:14px;color:var(--ink-2)">PD ' + esc(rx.pd.r) + (rx.pd.l ? ' / ' + esc(rx.pd.l) : '') + ' mm</p>' : '')
+        : rx.method === 'photo' ? '<img src="' + rx.photo + '" alt="Your prescription" style="max-height:260px;border:1px solid var(--line);margin-bottom:14px">'
+        : '<p style="font-size:14px;color:var(--ink-2)">We take it over the phone on your next order.</p>') +
+      (function(){ var a = Store.lensAdvice(rx, 'sv'); return a ? '<div class="advice ' + a.level + '" style="margin:12px 0">' + esc(a.text) + '</div>' : ''; })() +
+      '<p class="mono" style="margin:10px 0 16px;text-transform:none;letter-spacing:.02em">Saved ' + new Date(rx.savedAt).toLocaleDateString('en-IN', fmt) + '</p>' +
+      '<div style="display:flex;gap:10px;flex-wrap:wrap"><button type="button" class="btn btn-soft btn-sm" id="rxAdd">Change</button><button type="button" class="btn btn-soft btn-sm" id="rxClear">Remove</button></div>' +
+    '</div>';
+  }
+
+  function detailsTab(){
+    var user = Store.getUser();
+    if (!user) return '<div class="empty"><h3>Nothing saved yet</h3><p>Your name, phone and address are saved at your first checkout so the next one is faster.</p></div>';
+    return '<div class="panel" style="max-width:640px">' +
+      '<h3>Saved details</h3>' +
+      '<p style="color:var(--ink-2);font-size:14.5px">' +
+        (user.shop ? '<strong>' + esc(user.shop) + '</strong>' + (user.gstin ? ' · GSTIN ' + esc(user.gstin) : '') + '<br>' : '') +
+        esc(user.name || '') + (user.email ? ' · ' + esc(user.email) : '') + (user.phone ? ' · ' + esc(user.phone) : '') + '<br>' +
+        (user.address ? esc(user.address).replace(/\n/g, '<br>') + '<br>' + esc(user.city || '') + ' ' + esc(user.pin || '') : '') + '</p>' +
+      (user.trade ? '<p style="margin-top:10px"><span class="pill ok">Trade account</span> <span style="font-size:13px;color:var(--ink-2)">trade prices and volume tiers are on</span></p>' : '') +
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px">' +
+        '<button class="btn btn-soft btn-sm" id="forget">Forget these details</button>' +
+        (user.trade ? '<button class="btn btn-soft btn-sm" id="leaveTrade">Switch to retail view</button>' : '<a class="btn btn-soft btn-sm" href="trade.html">Open a trade account</a>') +
+      '</div>' +
+    '</div>';
+  }
+
+  function visitsTab(){
+    var rs = Store.reservations(), bs = Store.bookings();
+    var html = '<div class="settings">';
+    html += '<div class="setting"><h3>Reservations <small>try in store</small></h3>' +
+      (rs.length ? rs.map(function(r){
+        var s = SITE.store(r.store);
+        return '<div style="display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);font-size:14px"><div><b>' + esc(r.name) + '</b><br><span style="color:var(--ink-2);font-size:13px">' + esc(r.size || '') + ' · ' + esc(s ? s.name + ', ' + s.city : '') + ' · ' + esc(r.ref) + '</span></div><span class="pill ' + (r.status === 'ready' ? 'ok' : 'grey') + '">' + esc(r.status) + '</span></div>';
+      }).join('') : '<p style="font-size:14px;color:var(--muted)">No reservations. Any frame can be set aside from its page to try on in store.</p>') +
+    '</div>';
+    html += '<div class="setting"><h3>Eye tests <small>free, 15 minutes</small></h3>' +
+      (bs.length ? bs.map(function(b){
+        var s = SITE.store(b.store);
+        return '<div style="display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);font-size:14px"><div><b>' + esc(new Date(b.date).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })) + ' · ' + esc(b.slot) + '</b><br><span style="color:var(--ink-2);font-size:13px">' + esc(s ? s.name + ', ' + s.city : '') + ' · ' + esc(b.ref) + '</span></div><span class="pill ' + (b.status === 'done' ? 'ok' : 'grey') + '">' + esc(b.status) + '</span></div>';
+      }).join('') : '<p style="font-size:14px;color:var(--muted)">No eye tests booked.</p>') +
+      '<div><a class="btn btn-primary btn-sm" href="eye-test.html">Book an eye test</a></div>' +
+    '</div></div>';
+    return html;
+  }
+
+  function rxModal(){
+    var rx = Store.getRx() || { od: {}, os: {}, pd: {} };
+    if (!rx.od) rx.od = {}; if (!rx.os) rx.os = {}; if (!rx.pd) rx.pd = {};
+    var m = window.modal(
+      '<h2>Your prescription</h2>' +
+      '<p>Copy it from your last eye test. SPH is the main number; CYL and AXIS only if they appear on it.</p>' +
+      '<div class="rx-table">' +
+        '<span></span><span class="h">SPH</span><span class="h">CYL</span><span class="h">AXIS</span><span class="h">ADD</span>' +
+        '<span class="eye">Right</span><input id="odS" inputmode="decimal" placeholder="−2.25" value="' + esc(rx.od.sph || '') + '"><input id="odC" inputmode="decimal" placeholder="−0.50" value="' + esc(rx.od.cyl || '') + '"><input id="odA" inputmode="numeric" placeholder="180" value="' + esc(rx.od.axis || '') + '"><input id="odD" inputmode="decimal" placeholder="—" value="' + esc(rx.od.add || '') + '">' +
+        '<span class="eye">Left</span><input id="osS" inputmode="decimal" placeholder="−1.75" value="' + esc(rx.os.sph || '') + '"><input id="osC" inputmode="decimal" placeholder="−0.25" value="' + esc(rx.os.cyl || '') + '"><input id="osA" inputmode="numeric" placeholder="175" value="' + esc(rx.os.axis || '') + '"><input id="osD" inputmode="decimal" placeholder="—" value="' + esc(rx.os.add || '') + '">' +
+      '</div>' +
+      '<label class="check"><input type="checkbox" id="pdOn"' + (rx.pd.on ? ' checked' : '') + '><span>I know my pupillary distance (PD)</span></label>' +
+      '<div class="row2" id="pdRow"' + (rx.pd.on ? '' : ' hidden') + '><div class="field"><label for="pdR">PD right (mm)</label><input id="pdR" inputmode="decimal" value="' + esc(rx.pd.r || '') + '"></div><div class="field"><label for="pdL">PD left (mm)</label><input id="pdL" inputmode="decimal" value="' + esc(rx.pd.l || '') + '"></div></div>' +
+      '<p class="err" id="rxErr" hidden style="color:#B3261E"></p>' +
+      '<div class="actions"><button type="button" class="btn btn-primary" id="rxSave">Save</button><button type="button" class="btn btn-soft" data-close>Cancel</button></div>'
+    );
+    m.querySelector('#pdOn').addEventListener('change', function(e){ m.querySelector('#pdRow').hidden = !e.target.checked; });
+    m.querySelector('#rxSave').addEventListener('click', function(){
+      var g = function(id){ return m.querySelector('#' + id).value.trim().replace(/−/g, '-'); };
+      if (isNaN(parseFloat(g('odS'))) || isNaN(parseFloat(g('osS')))) { var e = m.querySelector('#rxErr'); e.hidden = false; e.textContent = 'SPH for both eyes, please — 0.00 if there is none.'; return; }
+      Store.setRx({ method: 'typed', od: { sph: g('odS'), cyl: g('odC'), axis: g('odA'), add: g('odD') }, os: { sph: g('osS'), cyl: g('osC'), axis: g('osA'), add: g('osD') }, pd: { on: m.querySelector('#pdOn').checked, r: g('pdR'), l: g('pdL') } });
+      window.closeModal(); window.toast('Prescription saved'); paint(current);
+    });
+  }
+
+  var current = 'orders';
+  function paint(tab){
+    current = tab;
+    wrap.innerHTML = tab === 'orders' ? ordersTab() : tab === 'rx' ? rxTab() : tab === 'details' ? detailsTab() : visitsTab();
+    bind();
+  }
+
+  function bind(){
+    var f = document.getElementById('forget');
+    if (f) f.addEventListener('click', function(){ Store.signOut(); window.toast('Saved details cleared', 'fa-eraser'); paint(current); });
+    var lt = document.getElementById('leaveTrade');
+    if (lt) lt.addEventListener('click', function(){ Store.setMode('retail'); location.reload(); });
+    var ra = document.getElementById('rxAdd');
+    if (ra) ra.addEventListener('click', rxModal);
+    var rc = document.getElementById('rxClear');
+    if (rc) rc.addEventListener('click', function(){ Store.clearRx(); window.toast('Prescription removed'); paint(current); });
+    document.querySelectorAll('[data-rx-for]').forEach(function(b){ b.addEventListener('click', rxModal); });
+
+    document.querySelectorAll('[data-reorder]').forEach(function(b){
+      b.addEventListener('click', function(){
+        var o = Store.orderByRef(b.getAttribute('data-reorder'));
+        if (!o) return;
+        /* Re-order can silently fail on anything that has since sold out, so
+           say which ones rather than quietly dropping them from the bag. */
+        var missed = [];
+        o.items.forEach(function(i){
+          var p = CATALOG.bySku(i.sku);
+          if (!p) { missed.push(i.name); return; }
+          var v = p.variants.filter(function(x){ return x.label === i.variant; })[0] || p.variants[0];
+          var r = Store.add(i.sku, v.id, i.qty, i.lensId || null);
+          if (!r.ok) missed.push(i.name);
+        });
+        if (missed.length) window.toast('Added what we could — ' + missed.join(', ') + ' unavailable', 'fa-triangle-exclamation');
+        else window.toast('Added to your ' + (Store.isTrade() ? 'order' : 'bag'));
+      });
+    });
+  }
+
+  document.querySelectorAll('#tabs .tab').forEach(function(t){
+    t.addEventListener('click', function(){
+      document.querySelectorAll('#tabs .tab').forEach(function(o){ o.setAttribute('aria-selected', String(o === t)); });
+      paint(t.getAttribute('data-t'));
+    });
+  });
+  var want = new URLSearchParams(location.search).get('tab');
+  if (want) { var tb = document.querySelector('#tabs .tab[data-t="' + want + '"]'); if (tb) tb.click(); else paint('orders'); }
+  else paint('orders');
+})();
+</script>
+</body>
+</html>

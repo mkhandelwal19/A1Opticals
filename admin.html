@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Owner dashboard — A1 Opticals</title>
+<meta name="theme-color" content="#14181A">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="stylesheet" href="store.css">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%2314181A'/><text x='50' y='67' text-anchor='middle' font-family='Helvetica,Arial,sans-serif' font-size='48' font-weight='700' fill='%23FFFFFF'>A1</text></svg>">
+</head>
+<body data-page="admin.html">
+<div id="chrome-top"></div>
+
+<main id="main">
+  <div class="wrap" id="loginWrap" hidden>
+    <div class="login">
+      <div class="mono">Owner login</div>
+      <h1>A1 Opticals dashboard</h1>
+      <p style="color:var(--ink-2); font-size:14.5px; margin-bottom:22px">Orders, products, prices, lens packages, offers, stores and bookings. Staff accounts can be limited to orders only.</p>
+      <form id="loginForm" novalidate>
+        <div class="field"><label for="lEmail">Email</label><input id="lEmail" type="email" autocomplete="username" required></div>
+        <div class="field"><label for="lPass">Password</label><input id="lPass" type="password" autocomplete="current-password" required></div>
+        <label class="check" style="margin-bottom:14px"><input type="checkbox" id="lRemember"><span>Keep me signed in on this device</span></label>
+        <p class="err" id="lErr" hidden style="margin:-4px 0 12px;color:#B3261E">That email and password do not match.</p>
+        <button type="submit" class="btn btn-primary btn-block"><i class="fa-solid fa-right-to-bracket"></i> Sign in</button>
+      </form>
+      <div class="note" style="margin-top:20px">
+        <i class="fa-solid fa-flask"></i>
+        <div><strong>Preview credentials</strong> — <code>owner@a1opticals.in</code> / <code>a1trade</code>.
+        On the live platform this is a real login: the password is never in the page, sessions expire,
+        and the database itself refuses reads from anyone who is not the owner.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap" id="dash" hidden>
+    <div style="padding:30px 0 6px; display:flex; justify-content:space-between; align-items:flex-end; gap:16px; flex-wrap:wrap">
+      <div>
+        <div class="mono">Owner view</div>
+        <h1 style="font-size:32px; margin-top:8px">Owner dashboard</h1>
+        <p style="color:var(--ink-2); margin-top:8px; max-width:64ch; font-size:14.5px">
+          Everything the storefront shows is edited here — products, prices and stock, the lens packages and offers, the words on the home page, the stores, delivery and eye-test slots — without ringing anyone.
+        </p>
+      </div>
+      <div style="display:flex; align-items:center; gap:12px">
+        <span class="mono" id="whoami"></span>
+        <a class="btn btn-soft btn-sm" href="index.html" target="_blank" rel="noopener"><i class="fa-solid fa-arrow-up-right-from-square"></i> View site</a>
+        <button type="button" class="btn btn-soft btn-sm" id="signOut"><i class="fa-solid fa-right-from-bracket"></i> Sign out</button>
+      </div>
+    </div>
+
+    <div class="note" style="margin:16px 0 22px">
+      <i class="fa-solid fa-lock"></i>
+      <div><strong>Edits made here are live on every page of the preview</strong> — they are saved in this browser. On the live platform they are rows in the database, and every change is logged with who made it and when.</div>
+    </div>
+
+    <div class="stats" id="stats"></div>
+
+    <div class="tabs" role="tablist" id="tabs">
+      <button class="tab" role="tab" aria-selected="true"  data-t="orders">Orders</button>
+      <button class="tab" role="tab" aria-selected="false" data-t="products">Products &amp; images</button>
+      <button class="tab" role="tab" aria-selected="false" data-t="stock">Price &amp; stock</button>
+      <button class="tab" role="tab" aria-selected="false" data-t="import">Import price list</button>
+      <button class="tab" role="tab" aria-selected="false" data-t="lenses">Lenses &amp; offers</button>
+      <button class="tab" role="tab" aria-selected="false" data-t="content">Site content</button>
+      <button class="tab" role="tab" aria-selected="false" data-t="stores">Stores &amp; delivery</button>
+      <button class="tab" role="tab" aria-selected="false" data-t="bookings">Bookings</button>
+      <button class="tab" role="tab" aria-selected="false" data-t="lowest">Needs attention</button>
+    </div>
+
+    <div id="panel"></div>
+  </div>
+</main>
+
+<div id="chrome-foot"></div>
+
+<script src="catalog.js"></script>
+<script src="site.js"></script>
+<script src="store.js"></script>
+<script src="chrome.js"></script>
+<script>
+(function(){
+  'use strict';
+  var esc = window.escapeHtml;
+  var rs = function(paise){ return paise == null ? '' : (paise / 100); };
+  var toPaise = function(v){ var n = parseFloat(String(v).replace(/[₹,\s]/g, '')); return isNaN(n) ? NaN : Math.round(n * 100); };
+
+  function stats(){
+    var orders = Store.orders();
+    var revenue = orders.reduce(function(n,o){ return n + o.total; }, 0);
+    var rxWaiting = orders.filter(function(o){ return Store.statusOf(o) === 'awaiting prescription' || (o.items.some(function(i){ return i.needsRx; }) && (!o.rx || o.rx.method === 'later') && Store.statusOf(o) === 'confirmed'); }).length;
+    var lowStock = CATALOG.products.filter(function(p){ return p.stock <= 3; }).length;
+    var bookings = Store.bookings().filter(function(b){ return b.status === 'booked'; }).length + Store.reservations().filter(function(r){ return r.status === 'requested'; }).length;
+    var cards = [['Orders', orders.length], ['Revenue', Store.rupees(revenue)], ['Awaiting prescription', rxWaiting], ['Bookings & reservations', bookings], ['Low stock', lowStock]];
+    document.getElementById('stats').innerHTML = cards.map(function(c){
+      return '<div class="stat"><div class="mono">' + c[0] + '</div><b>' + c[1] + '</b></div>';
+    }).join('');
+    document.getElementById('stats').style.gridTemplateColumns = 'repeat(5,1fr)';
+  }
+
+  /* ── Orders ─────────────────────────────────────────────────────────────── */
+  function ordersTable(list){
+    var orders = list || Store.orders();
+    if (!orders.length){
+      return '<div class="empty"><h3>No orders yet</h3>' +
+             '<p>Place one through the shop and it will show up here immediately.</p>' +
+             '<p style="margin-top:16px"><a class="btn btn-primary btn-sm" href="shop.html">Go to the shop</a></p></div>';
+    }
+    return '<div class="table-wrap"><table><thead><tr>' +
+      '<th>Ref</th><th>Placed</th><th>Customer</th><th>Items</th><th>Rx</th><th>Delivery</th><th class="num">Total</th><th>Paid</th><th>Status</th><th></th>' +
+      '</tr></thead><tbody>' +
+      orders.map(function(o){
+        var st = Store.statusOf(o);
+        var needs = o.items.some(function(i){ return i.needsRx; });
+        var rxCell = !needs ? '<span style="color:var(--muted)">—</span>'
+          : !o.rx || o.rx.method === 'later' ? '<span class="pill warn">missing</span>'
+          : o.rx.method === 'call' ? '<span class="pill warn">call</span>'
+          : o.rx.method === 'photo' ? '<span class="pill ok">photo</span>'
+          : '<span class="pill ok" title="' + esc(Store.rxSummary(o.rx)) + '">' + esc(Store.rxSummary(o.rx)).slice(0, 22) + '…</span>';
+        var d = o.delivery || {};
+        return '<tr>' +
+          '<td class="tnum"><b>' + esc(o.ref) + '</b>' + (o.mode === 'trade' ? '<br><span class="pill grey">trade</span>' : '') + '</td>' +
+          '<td>' + new Date(o.placedAt).toLocaleDateString('en-IN', { day:'numeric', month:'short' }) + '</td>' +
+          '<td>' + esc(o.customer.shop || o.customer.name) + '<br><span style="color:var(--muted); font-size:12px">' + esc(o.customer.phone || '') + (o.customer.city ? ' · ' + esc(o.customer.city) : '') + '</span></td>' +
+          '<td style="white-space:normal;max-width:260px;font-size:13px">' + o.items.map(function(i){ return i.qty + ' × ' + esc(i.name) + (i.lens ? ' <span style="color:var(--muted)">(' + esc(i.lens) + ')</span>' : ''); }).join('<br>') + '</td>' +
+          '<td>' + rxCell + '</td>' +
+          '<td style="font-size:13px">' + esc(d.method === 'collect' ? 'Collect' : d.method === 'courier' ? 'Courier' : 'Van') + (o.customer.slot ? '<br><span style="color:var(--muted);font-size:12px">' + esc(o.customer.slot) + '</span>' : '') + '</td>' +
+          '<td class="num">' + Store.rupees(o.total) + (o.discount ? '<br><span style="color:var(--muted);font-size:12px">−' + Store.rupees(o.discount) + ' offer</span>' : '') + '</td>' +
+          '<td style="font-size:13px">' + esc((o.payment && o.payment.method || '').replace(' (preview)', '')) + (o.payment && o.payment.status ? '<br><span style="color:var(--muted);font-size:12px">' + esc(o.payment.status) + '</span>' : '') + '</td>' +
+          '<td><select class="sort mini" data-ref="' + esc(o.ref) + '">' +
+            Store.STATUS.map(function(s){ return '<option' + (s === st ? ' selected' : '') + '>' + s + '</option>'; }).join('') +
+          '</select></td>' +
+          '<td><a class="btn btn-soft btn-sm" href="order.html?ref=' + encodeURIComponent(o.ref) + '" target="_blank" rel="noopener">Open</a></td>' +
+        '</tr>';
+      }).join('') +
+      '</tbody></table></div>';
+  }
+
+  /* ── Price & stock ──────────────────────────────────────────────────────── */
+  function stockTable(list){
+    return '<div class="table-wrap"><table><thead><tr>' +
+      '<th>Product</th><th>SKU</th><th>Range</th><th class="num">Trade ₹</th><th class="num">Retail ₹ (frame)</th><th class="num">MRP</th><th class="num">GST</th><th class="num">Stock</th>' +
+      '</tr></thead><tbody>' +
+      list.map(function(p){
+        var pill = p.stock === 0 ? '<span class="pill grey">out</span>'
+                 : p.stock <= 3  ? '<span class="pill warn">' + p.stock + ' left</span>'
+                 : '<span class="pill ok">' + p.stock + '</span>';
+        return '<tr>' +
+          '<td>' + esc(p.name) + (p.colour ? ' · ' + esc(p.colour.label) : '') + '</td>' +
+          '<td class="tnum">' + esc(p.sku) + '</td>' +
+          '<td>' + esc(p.brand) + '</td>' +
+          '<td class="num"><input class="cell tnum" data-edit="price" data-sku="' + esc(p.sku) + '" value="' + rs(p.price) + '" inputmode="decimal" aria-label="Trade price for ' + esc(p.name) + '"></td>' +
+          '<td class="num"><input class="cell tnum" data-edit="retail" data-sku="' + esc(p.sku) + '" value="' + rs(p.retail) + '" inputmode="decimal" aria-label="Retail price for ' + esc(p.name) + '"></td>' +
+          '<td class="num">' + Store.rupees(p.mrp) + '</td>' +
+          '<td class="num">' + p.gst + '%</td>' +
+          '<td class="num"><input class="cell tnum" data-edit="stock" data-sku="' + esc(p.sku) + '" value="' + p.stock + '" inputmode="numeric" aria-label="Stock for ' + esc(p.name) + '"> ' + pill + '</td>' +
+        '</tr>';
+      }).join('') +
+      '</tbody></table></div>' +
+      '<div style="display:flex; gap:12px; align-items:center; margin-top:14px; flex-wrap:wrap">' +
+        '<button type="button" class="btn btn-primary btn-sm" id="saveCells"><i class="fa-solid fa-floppy-disk"></i> Save changes</button>' +
+        '<a class="btn btn-soft btn-sm" id="dlCsv" download="a1-price-list.csv">Download as spreadsheet</a>' +
+        '<button type="button" class="btn btn-soft btn-sm" id="resetOvr">Reset preview edits</button>' +
+        '<span class="mono" id="cellStatus" style="text-transform:none;letter-spacing:.02em"></span>' +
+      '</div>' +
+      '<p style="font-size:13px;color:var(--muted);margin-top:10px">Retail is the frame price before the included lens package (' + Store.rupees(SITE.includedLens().price) + '); the storefront shows the sum. Trade is per unit at quantity one; volume tiers are on the product.</p>';
+  }
+
+  /* ── Price list import ──────────────────────────────────────────────────
+     The owner keeps prices in Excel or Tally. The sheet is pasted here,
+     every change is shown before it is applied, and bad rows are refused
+     with a reason. A header row names the columns; without one, the
+     columns are SKU, name, trade price, stock, retail price. */
+  function csvOf(){
+    var rows = [['sku','name','trade_price_rs','stock','retail_price_rs','mrp_rs','moq','gst_pct','hsn']];
+    CATALOG.products.forEach(function(p){
+      rows.push([p.sku, p.name + (p.colour ? ' · ' + p.colour.label : ''), rs(p.price), p.stock, rs(p.retail), rs(p.mrp), p.moq, p.gst, p.hsn]);
+    });
+    return rows.map(function(r){ return r.map(function(v){ return /[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g,'""') + '"' : v; }).join(','); }).join('\n');
+  }
+
+  function parseSheet(text){
+    var out = [], bad = [];
+    var lines = text.split(/\r?\n/).filter(function(l){ return l.trim(); });
+    var cols = { sku: 0, price: 2, stock: 3, retail: 4 };
+    var start = 0;
+    if (lines.length && /sku/i.test(lines[0])) {
+      var head = lines[0].split(/\t|,|;/).map(function(h){ return h.trim().toLowerCase().replace(/^"|"$/g, ''); });
+      cols = { sku: head.indexOf('sku'), price: -1, stock: -1, retail: -1 };
+      head.forEach(function(h, i){
+        if (/^(trade|trade_price|trade price|price|trade_price_rs)/.test(h)) cols.price = i;
+        if (/^stock/.test(h)) cols.stock = i;
+        if (/^retail/.test(h)) cols.retail = i;
+      });
+      start = 1;
+    }
+    lines.slice(start).forEach(function(line, k){
+      var i = k + start;
+      var cells = line.split(/\t|,|;/).map(function(x){ return x.trim().replace(/^"|"$/g,''); });
+      var sku = (cells[cols.sku] || '').toUpperCase();
+      var p = CATALOG.bySku(sku);
+      if (!p) { bad.push({ line: i + 1, why: 'Unknown SKU ' + (sku || '(blank)') }); return; }
+      var price = cols.price > -1 && cells.length > cols.price ? toPaise(cells[cols.price]) : NaN;
+      var stock = cols.stock > -1 && cells.length > cols.stock ? parseInt(cells[cols.stock], 10) : NaN;
+      var retail = cols.retail > -1 && cells.length > cols.retail ? toPaise(cells[cols.retail]) : NaN;
+      // two-column sheets (sku, stock) are common from a stock count
+      if (cells.length === 2 && start === 0) { price = NaN; retail = NaN; stock = parseInt(cells[1], 10); }
+      if (isNaN(price) && isNaN(stock) && isNaN(retail)) { bad.push({ line: i + 1, why: sku + ': no price or stock in the row' }); return; }
+      if (!isNaN(price) && price <= 0) { bad.push({ line: i + 1, why: sku + ': trade price must be above zero' }); return; }
+      if (!isNaN(price) && price > p.mrp) { bad.push({ line: i + 1, why: sku + ': trade price above MRP ' + Store.rupees(p.mrp) }); return; }
+      if (!isNaN(retail) && retail <= 0) { bad.push({ line: i + 1, why: sku + ': retail price must be above zero' }); return; }
+      if (!isNaN(retail) && retail > p.mrp) { bad.push({ line: i + 1, why: sku + ': retail price above MRP ' + Store.rupees(p.mrp) }); return; }
+      if (!isNaN(stock) && stock < 0) { bad.push({ line: i + 1, why: sku + ': stock cannot be negative' }); return; }
+      var row = { p: p, price: isNaN(price) ? null : price, stock: isNaN(stock) ? null : stock, retail: isNaN(retail) ? null : retail };
+      row.changed = (row.price !== null && row.price !== p.price) || (row.stock !== null && row.stock !== p.stock) || (row.retail !== null && row.retail !== p.retail);
+      out.push(row);
+    });
+    return { rows: out, bad: bad };
+  }
+
+  function importPanel(){
+    return '<div class="panel" style="display:grid; grid-template-columns:1fr 1fr; gap:28px; align-items:start" id="impGrid">' +
+      '<div>' +
+        '<div class="mono">Paste from Excel or Tally</div>' +
+        '<h3 style="font-size:20px; margin:8px 0 8px">Update the whole price list at once</h3>' +
+        '<p style="font-size:14px; color:var(--ink-2)">Columns: <code>SKU, name, trade price, stock, retail price</code> — the same layout as the download on the Price &amp; stock tab, or any order if the first row names the columns. ' +
+        'A two-column <code>SKU, stock</code> sheet from a stock count also works. Nothing changes until you review the preview and apply it.</p>' +
+        '<p class="mono" style="margin-top:12px;text-transform:none;letter-spacing:.02em"><button type="button" class="linkish" id="impSample">Paste a sample sheet</button></p>' +
+        '<textarea id="impText" rows="9" spellcheck="false" style="width:100%; margin-top:12px; padding:12px 14px; border:1px solid var(--line-2); font-family:var(--f-mono); font-size:12.5px; line-height:1.7; background:#fff" placeholder="A1-FR-2102, Rille matte black, 720, 140, 799&#10;A1-LN-5101, Single vision stock, 175, 3000"></textarea>' +
+        '<div style="display:flex; gap:10px; margin-top:12px"><button type="button" class="btn btn-primary btn-sm" id="impPreview"><i class="fa-solid fa-magnifying-glass"></i> Preview changes</button></div>' +
+      '</div>' +
+      '<div id="impOut"><div class="empty" style="padding:40px 20px"><h3>No sheet previewed yet</h3><p>Paste rows on the left and preview them.</p></div></div>' +
+    '</div>';
+  }
+
+  var pending = null;
+  function renderPreview(res){
+    var out = document.getElementById('impOut');
+    var changed = res.rows.filter(function(r){ return r.changed; });
+    var same = res.rows.length - changed.length;
+    var html = '';
+    if (res.bad.length){
+      html += '<div class="note" style="margin-bottom:14px"><i class="fa-solid fa-triangle-exclamation"></i><div><strong>' + res.bad.length + ' row' + (res.bad.length === 1 ? '' : 's') + ' refused</strong><br>' +
+        res.bad.map(function(b){ return 'Line ' + b.line + ' — ' + esc(b.why); }).join('<br>') + '</div></div>';
+    }
+    if (!changed.length){
+      html += '<div class="empty" style="padding:30px 20px"><h3>Nothing to change</h3><p>' + (same ? same + ' row' + (same === 1 ? '' : 's') + ' already match the catalogue.' : 'No valid rows found.') + '</p></div>';
+      out.innerHTML = html; pending = null; return;
+    }
+    function cell(was, now, fmt){ return now !== null && now !== was ? '<span style="color:var(--muted); text-decoration:line-through">' + fmt(was) + '</span> <b>' + fmt(now) + '</b>' : '<span style="color:var(--muted)">' + fmt(was) + '</span>'; }
+    html += '<div class="table-wrap"><table><thead><tr><th>SKU</th><th>Product</th><th class="num">Trade</th><th class="num">Retail</th><th class="num">Stock</th></tr></thead><tbody>' +
+      changed.map(function(r){
+        return '<tr><td class="tnum">' + esc(r.p.sku) + '</td><td>' + esc(r.p.name) + '</td>' +
+          '<td class="num">' + cell(r.p.price, r.price, Store.rupees) + '</td>' +
+          '<td class="num">' + cell(r.p.retail, r.retail, Store.rupees) + '</td>' +
+          '<td class="num">' + cell(r.p.stock, r.stock, String) + '</td></tr>';
+      }).join('') + '</tbody></table></div>' +
+      '<div style="display:flex; gap:12px; align-items:center; margin-top:14px"><button type="button" class="btn btn-primary btn-sm" id="impApply"><i class="fa-solid fa-check"></i> Apply ' + changed.length + ' change' + (changed.length === 1 ? '' : 's') + '</button>' +
+      (same ? '<span class="mono">' + same + ' unchanged</span>' : '') + '</div>';
+    out.innerHTML = html;
+    pending = changed;
+    document.getElementById('impApply').addEventListener('click', function(){
+      pending.forEach(function(r){
+        var patch = {};
+        if (r.price !== null) patch.price = r.price;
+        if (r.stock !== null) patch.stock = r.stock;
+        if (r.retail !== null) patch.retail = r.retail;
+        CATALOG.setOverride(r.p.sku, patch);
+      });
+      window.toast(pending.length + ' SKUs updated — live on every page');
+      stats();
+      out.innerHTML = '<div class="empty" style="padding:30px 20px"><h3>' + pending.length + ' change' + (pending.length === 1 ? '' : 's') + ' applied</h3><p>Open the catalogue in another tab to see them.</p></div>';
+      pending = null;
+    });
+  }
+
+  /* ── Products & images ─────────────────────────────────────────────────── */
+  var FAMILIES = Object.keys(CATALOG.families);
+  var CATS = CATALOG.categories.filter(function(c){ return c.id !== 'all'; });
+
+  function productsPanel(){
+    var models = CATALOG.models();
+    return '<div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:16px; flex-wrap:wrap">' +
+        '<p style="color:var(--ink-2); font-size:14px; max-width:64ch">' + models.length + ' models, ' + CATALOG.products.length + ' SKUs. A model is a design; each colourway is its own SKU with its own stock and photos; sizes are options on the SKU. The storefront shows retail + the included lens; opticians see the trade price.</p>' +
+        '<button type="button" class="btn btn-primary btn-sm" id="addProduct"><i class="fa-solid fa-plus"></i> Add a product</button>' +
+      '</div>' +
+      '<div id="editor"></div>' +
+      '<div class="table-wrap"><table><thead><tr><th></th><th>Model</th><th>Category</th><th>Colourways</th><th>Sizes</th><th class="num">Trade</th><th class="num">Retail + lens</th><th class="num">MRP</th><th></th></tr></thead><tbody>' +
+      models.map(function(m){
+        var sibs = CATALOG.siblings(m);
+        var c = CATALOG.category(m.cat) || {};
+        return '<tr>' +
+          '<td><img class="thumb" src="' + CATALOG.img(m.photo) + '" alt=""></td>' +
+          '<td><b>' + esc(m.name) + '</b>' + (Store.isNew(m) ? ' <span class="pill ok">new</span>' : '') + '<br><span style="color:var(--muted);font-size:12px">' + esc(m.brand) + ' · ' + esc(m.model) + '</span></td>' +
+          '<td>' + esc(c.label || m.cat) + '</td>' +
+          '<td><div class="card-swatches" style="padding:0">' + sibs.map(function(s){
+              return s.colour ? '<button type="button" class="sw" data-edit-sku="' + esc(s.sku) + '" style="--sw:' + esc(s.colour.hex) + '" title="Edit ' + esc(s.colour.label) + '" aria-label="Edit ' + esc(s.colour.label) + '"></button>' : '';
+            }).join('') + '<span style="font-size:12px;color:var(--muted);margin-left:4px">' + sibs.length + '</span></div></td>' +
+          '<td class="tnum" style="font-size:13px">' + esc(m.variants.map(function(v){ return v.id; }).join(', ')) + '</td>' +
+          '<td class="num">' + Store.rupees(m.price) + '</td>' +
+          '<td class="num">' + (c.trade ? '—' : Store.rupees(Store.displayPrice(m))) + '</td>' +
+          '<td class="num">' + Store.rupees(m.mrp) + '</td>' +
+          '<td class="num"><button type="button" class="btn btn-soft btn-sm" data-edit-sku="' + esc(m.sku) + '">Edit</button></td>' +
+        '</tr>';
+      }).join('') + '</tbody></table></div>';
+  }
+
+  function optionList(list, cur, labels){
+    return list.map(function(v){ return '<option value="' + esc(v) + '"' + (v === cur ? ' selected' : '') + '>' + esc(labels ? labels[v] || v : v) + '</option>'; }).join('');
+  }
+
+  function productForm(p){
+    var isNew = !p;
+    p = p || { sku: '', model: '', name: '', style: '', cat: 'frames', brand: 'A1 Studio', colour: { id: 'black', label: 'Black' },
+               variants: [{ id: '52', label: '52 □ 18 – 145', delta: 0 }], price: 0, retail: 0, mrp: 0, gst: 12, hsn: '9003',
+               moq: 6, unit: 'pc', stock: 0, photo: '', photos: [], attrs: { material: 'Acetate', shape: 'Rectangle' }, blurb: '', tiers: [], weight: 24, isNew: true };
+    var locked = !isNew && !p.custom;   // catalogue rows: prices, stock, copy and photos are editable; structure is not
+    var f = function(id, label, val, attrs){ return '<div class="field"><label for="' + id + '">' + label + '</label><input id="' + id + '" ' + (attrs || '') + ' value="' + esc(val == null ? '' : val) + '"></div>'; };
+    var s = function(id, label, list, cur, labels){ return '<div class="field"><label for="' + id + '">' + label + '</label><select id="' + id + '">' + optionList(list, cur, labels) + '</select></div>'; };
+    var catLabels = {}; CATS.forEach(function(c){ catLabels[c.id] = c.label; });
+    return '<div class="panel editor" id="editorPanel">' +
+      '<div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:14px">' +
+        '<h3 style="margin:0">' + (isNew ? 'New product' : 'Edit ' + esc(p.sku)) + '</h3>' +
+        '<button type="button" class="linkish" id="edClose">Close</button></div>' +
+      (locked ? '<div class="note" style="margin-bottom:16px"><i class="fa-solid fa-circle-info"></i><div>Catalogue row from the price list. Name, style, prices, stock, description, weight, the “new” badge and photos can be changed here; category, colour and sizes are edited on the live build through the product table.</div></div>' : '') +
+      '<div class="ed-grid">' +
+        '<div>' +
+          '<div class="row2">' + s('edCat', 'Category', CATS.map(function(c){ return c.id; }), p.cat, catLabels) + f('edBrand', 'Brand / range', p.brand) + '</div>' +
+          '<div class="row2">' + f('edSku', 'SKU', p.sku, 'placeholder="A1-FR-2108" style="text-transform:uppercase"' + (isNew ? '' : ' readonly')) + f('edModel', 'Model code (shared by colourways)', p.model || p.sku, 'placeholder="A1-FR-2108"' + (locked ? ' readonly' : '')) + '</div>' +
+          '<div class="row2">' + f('edName', 'Name', p.name, 'placeholder="Meridian"') + f('edStyle', 'Style line', p.style || '', 'placeholder="Rectangle acetate"') + '</div>' +
+          '<div class="row2">' + f('edColour', 'Colourway label', p.colour ? p.colour.label : '', 'placeholder="Tortoise"' + (locked ? ' readonly' : '')) + s('edFamily', 'Colour family (swatch)', FAMILIES, p.colour ? p.colour.id : 'black', CATALOG.families) + '</div>' +
+          f('edSizes', 'Sizes / options, comma-separated', p.variants.map(function(v){ return v.label; }).join(', '), 'placeholder="51 □ 19 – 142, 53 □ 19 – 145"' + (locked ? ' readonly' : '')) +
+          '<div class="row3">' + f('edMaterial', 'Material', p.attrs && p.attrs.material || '', 'placeholder="Acetate"' + (locked ? ' readonly' : '')) + f('edShape', 'Shape', p.attrs && p.attrs.shape || '', 'placeholder="Rectangle"' + (locked ? ' readonly' : '')) + f('edWeight', 'Weight (g)', p.weight || '', 'inputmode="numeric"') + '</div>' +
+          '<div class="field"><label for="edBlurb">Description</label><textarea id="edBlurb" rows="3">' + esc(p.blurb || '') + '</textarea></div>' +
+          '<label class="check"><input type="checkbox" id="edNew"' + (p.isNew ? ' checked' : '') + '><span>Show the NEW badge</span></label>' +
+        '</div>' +
+        '<div>' +
+          '<div class="row3">' + f('edPrice', 'Trade price (₹)', p.price ? rs(p.price) : '', 'inputmode="decimal"') + f('edRetail', 'Retail frame price (₹)', p.retail ? rs(p.retail) : '', 'inputmode="decimal"') + f('edMrp', 'MRP (₹)', p.mrp ? rs(p.mrp) : '', 'inputmode="decimal"') + '</div>' +
+          '<p style="font-size:12.5px;color:var(--muted);margin:-6px 0 14px">Storefront shows retail + ' + Store.rupees(SITE.includedLens().price) + ' lens = <b id="edAllIn">' + (p.retail ? Store.rupees(p.retail + SITE.includedLens().price) : '—') + '</b>, MRP struck through.</p>' +
+          '<div class="row3">' + f('edStock', 'Stock', p.stock, 'inputmode="numeric"') + f('edMoq', 'Trade MOQ', p.moq, 'inputmode="numeric"' + (locked ? ' readonly' : '')) + f('edGst', 'GST %', p.gst, 'inputmode="numeric"' + (locked ? ' readonly' : '')) + '</div>' +
+          f('edHsn', 'HSN', p.hsn, (locked ? 'readonly' : '')) +
+          '<div class="field"><label>Photos · first is the main one</label>' +
+            '<div class="ed-photos" id="edPhotos"></div>' +
+            '<div style="margin-top:10px"><input type="file" id="edFile" accept="image/*" multiple><span class="hint" style="display:block;margin-top:6px">JPG or PNG, up to five. Resized to 900 px here before they are saved. Leave empty to keep the line render.</span></div>' +
+          '</div>' +
+          '<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:6px">' +
+            '<button type="button" class="btn btn-primary btn-sm" id="edSave"><i class="fa-solid fa-floppy-disk"></i> Save product</button>' +
+            (p.custom ? '<button type="button" class="btn btn-soft btn-sm" id="edDelete">Delete</button>' : '') +
+            '<span class="mono" id="edStatus" style="text-transform:none;letter-spacing:.02em"></span>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function shrink(file, done){
+    var reader = new FileReader();
+    reader.onload = function(){
+      var im = new Image();
+      im.onload = function(){
+        var max = 900, w = im.width, h = im.height, k = Math.min(1, max / Math.max(w, h));
+        var c = document.createElement('canvas'); c.width = Math.round(w * k); c.height = Math.round(h * k);
+        var ctx = c.getContext('2d'); ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(im, 0, 0, c.width, c.height);
+        done(c.toDataURL('image/jpeg', 0.84));
+      };
+      im.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function wireEditor(p){
+    var host = document.getElementById('editor');
+    host.innerHTML = productForm(p);
+    host.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    var photos = (p && p.photos && p.photos.slice()) || [];
+    function paintPhotos(){
+      var el = document.getElementById('edPhotos');
+      var list = photos.length ? photos : [p ? p.photo : ''];
+      el.innerHTML = list.map(function(u, i){
+        return '<div><img src="' + CATALOG.img(u) + '" alt="">' + (photos.length ? '<button type="button" data-rm="' + i + '" aria-label="Remove">×</button>' : '') + '</div>';
+      }).join('');
+      el.querySelectorAll('[data-rm]').forEach(function(b){ b.addEventListener('click', function(){ photos.splice(+b.getAttribute('data-rm'), 1); paintPhotos(); }); });
+    }
+    paintPhotos();
+    document.getElementById('edClose').addEventListener('click', function(){ host.innerHTML = ''; });
+    document.getElementById('edRetail').addEventListener('input', function(e){
+      var v = toPaise(e.target.value); document.getElementById('edAllIn').textContent = isNaN(v) ? '—' : Store.rupees(v + SITE.includedLens().price);
+    });
+
+    document.getElementById('edFile').addEventListener('change', function(e){
+      var files = Array.prototype.slice.call(e.target.files || []).slice(0, 5 - photos.length);
+      if (!files.length) return;
+      var st = document.getElementById('edStatus');
+      var n = 0;
+      files.forEach(function(file){
+        shrink(file, function(dataUrl){
+          photos.push(dataUrl); n++;
+          st.textContent = n + ' photo' + (n === 1 ? '' : 's') + ' ready to save';
+          paintPhotos();
+        });
+      });
+    });
+
+    var del = document.getElementById('edDelete');
+    if (del) del.addEventListener('click', function(){
+      CATALOG.removeCustom(p.sku); window.toast(p.sku + ' removed'); paint('products');
+    });
+
+    document.getElementById('edSave').addEventListener('click', function(){
+      var g = function(id){ return document.getElementById(id).value.trim(); };
+      var sku = g('edSku').toUpperCase(), price = toPaise(g('edPrice')), retail = toPaise(g('edRetail')), mrp = toPaise(g('edMrp')), stock = parseInt(g('edStock'), 10);
+      var st = document.getElementById('edStatus');
+      if (!sku) { st.textContent = 'A SKU is required'; return; }
+      if (!g('edName')) { st.textContent = 'A name is required'; return; }
+      if (isNaN(price) || price <= 0) { st.textContent = 'Trade price must be above zero'; return; }
+      if (isNaN(retail) || retail <= 0) { st.textContent = 'Retail price must be above zero'; return; }
+      if (isNaN(mrp) || mrp < retail) { st.textContent = 'MRP must be at least the retail price'; return; }
+      if (isNaN(stock) || stock < 0) { st.textContent = 'Stock cannot be negative'; return; }
+      var weight = parseInt(g('edWeight'), 10);
+
+      var existing = CATALOG.bySku(sku);
+      if (existing && !existing.custom) {
+        var patch = { price: price, retail: retail, mrp: mrp, stock: stock, name: g('edName'), style: g('edStyle'), blurb: g('edBlurb'), isNew: document.getElementById('edNew').checked };
+        if (!isNaN(weight)) patch.weight = weight;
+        patch.photos = photos.slice();
+        if (photos.length) patch.photo = photos[0];
+        if (!CATALOG.setOverride(sku, patch)) { st.textContent = 'Could not save — browser storage is full. Try fewer or smaller photos.'; return; }
+      } else {
+        var fam = g('edFamily');
+        var sizes = g('edSizes').split(',').map(function(x){ return x.trim(); }).filter(Boolean);
+        if (!sizes.length) sizes = ['Standard'];
+        var cat = g('edCat');
+        var unit = cat === 'lenses' ? 'pair' : cat === 'contacts' ? 'box' : cat === 'instruments' ? 'unit' : 'pc';
+        var shapeKey = { Round: 'round', Wayfarer: 'wayfarer', Square: 'square', Rectangle: 'rectangle', Aviator: 'aviator', 'Cat-eye': 'cateye', Browline: 'browline', Oval: 'oval' }[g('edShape')] || 'rectangle';
+        var matKey = /metal|titanium/i.test(g('edMaterial')) ? 'metal' : /tr90|nylon/i.test(g('edMaterial')) ? 'tr90' : 'acetate';
+        var np = {
+          sku: sku, model: g('edModel').toUpperCase() || sku, name: g('edName'), style: g('edStyle'), cat: cat, brand: g('edBrand') || 'A1 Studio',
+          pack: 'Per ' + (unit === 'pc' ? 'piece' : unit) + ' · MOQ ' + (parseInt(g('edMoq'), 10) || 1), unit: unit,
+          moq: parseInt(g('edMoq'), 10) || 1, price: price, retail: retail, mrp: mrp, gst: parseInt(g('edGst'), 10) || 12, hsn: g('edHsn') || '9003',
+          tiers: [], stock: stock, blurb: g('edBlurb'), weight: isNaN(weight) ? undefined : weight, isNew: document.getElementById('edNew').checked,
+          colour: g('edColour') ? { id: fam, label: g('edColour'), hex: CATALOG.swatches[fam] } : null,
+          attrs: { material: g('edMaterial'), shape: g('edShape'), gender: 'Unisex' },
+          photo: photos[0] || (existing && existing.photo) || ((cat === 'sun' ? 'sun:' : 'frame:') + shapeKey + ':' + matKey + ':' + fam + (cat === 'sun' ? ':grey' : '')),
+          photos: photos.slice(),
+          variants: sizes.map(function(l, i){ return { id: String(i + 1), label: l, delta: 0 }; })
+        };
+        if (!CATALOG.upsertCustom(np)) { st.textContent = 'Could not save — browser storage is full. Try fewer or smaller photos.'; return; }
+      }
+      window.toast(sku + ' saved — live on every page');
+      stats();
+      paint('products');
+    });
+  }
+
+  /* ── Settings forms ───────────────────────────────────────────────────────
+     One small form builder for the site.js keys. A spec row is
+     { k: 'path.in.object', label, type } with types text, textarea, rupees,
+     int, bool, lines (one per line) and pairs ("a | b" per line). */
+  function getPath(o, k){ return k.split('.').reduce(function(a, b){ return a == null ? a : a[b]; }, o); }
+  function setPath(o, k, v){ var parts = k.split('.'); var cur = o; parts.slice(0, -1).forEach(function(s){ if (typeof cur[s] !== 'object' || cur[s] === null) cur[s] = {}; cur = cur[s]; }); cur[parts[parts.length - 1]] = v; }
+
+  function form(id, spec, obj){
+    return spec.map(function(r){
+      var v = getPath(obj, r.k);
+      var fid = id + '_' + r.k.replace(/\./g, '_');
+      if (r.type === 'bool') return '<label class="check"><input type="checkbox" id="' + fid + '"' + (v ? ' checked' : '') + '><span>' + r.label + '</span></label>';
+      if (r.type === 'textarea') return '<div class="field"><label for="' + fid + '">' + r.label + '</label><textarea id="' + fid + '" rows="' + (r.rows || 3) + '">' + esc(v == null ? '' : v) + '</textarea></div>';
+      if (r.type === 'lines') return '<div class="field"><label for="' + fid + '">' + r.label + ' <span class="hint">· one per line</span></label><textarea id="' + fid + '" rows="' + (r.rows || 4) + '">' + esc((v || []).join('\n')) + '</textarea></div>';
+      if (r.type === 'pairs') return '<div class="field"><label for="' + fid + '">' + r.label + ' <span class="hint">· one per line, "' + r.a + ' | ' + r.b + '"</span></label><textarea id="' + fid + '" rows="' + (r.rows || 4) + '">' + esc((v || []).map(function(x){ return x[r.ka] + ' | ' + x[r.kb]; }).join('\n')) + '</textarea></div>';
+      var val = r.type === 'rupees' ? rs(v) : v == null ? '' : v;
+      return '<div class="field"><label for="' + fid + '">' + r.label + '</label><input id="' + fid + '" value="' + esc(val) + '"' + (r.type === 'rupees' || r.type === 'int' ? ' inputmode="decimal"' : '') + (r.placeholder ? ' placeholder="' + esc(r.placeholder) + '"' : '') + '></div>';
+    }).join('');
+  }
+  function readForm(id, spec, obj){
+    spec.forEach(function(r){
+      var el = document.getElementById(id + '_' + r.k.replace(/\./g, '_'));
+      if (!el) return;
+      var v;
+      if (r.type === 'bool') v = el.checked;
+      else if (r.type === 'rupees') { v = toPaise(el.value); if (isNaN(v)) v = getPath(obj, r.k); }
+      else if (r.type === 'int') { v = parseInt(el.value, 10); if (isNaN(v)) v = getPath(obj, r.k); }
+      else if (r.type === 'lines') v = el.value.split('\n').map(function(s){ return s.trim(); }).filter(Boolean);
+      else if (r.type === 'pairs') v = el.value.split('\n').map(function(s){ var p = s.split('|'); if (p.length < 2) return null; var o = {}; o[r.ka] = p[0].trim(); o[r.kb] = p[1].trim(); return o; }).filter(Boolean);
+      else v = el.value.trim();
+      setPath(obj, r.k, v);
+    });
+    return obj;
+  }
+  function setting(id, title, sub, body, key){
+    return '<div class="setting" id="set_' + id + '"><h3>' + title + (sub ? '<small>' + sub + '</small>' : '') + '</h3>' + body +
+      '<div class="actions"><button type="button" class="btn btn-primary btn-sm" data-save="' + id + '"><i class="fa-solid fa-floppy-disk"></i> Save</button>' +
+      (key && SITE.isEdited(key) ? '<button type="button" class="btn btn-soft btn-sm" data-reset="' + key + '">Reset to default</button>' : '') +
+      '<span class="mono" data-status="' + id + '" style="text-transform:none;letter-spacing:.02em"></span></div></div>';
+  }
+  var SAVERS = {};
+  function wireSettings(panel){
+    panel.querySelectorAll('[data-save]').forEach(function(b){
+      b.addEventListener('click', function(){
+        var id = b.getAttribute('data-save');
+        var msg = SAVERS[id] ? SAVERS[id]() : '';
+        var st = panel.querySelector('[data-status="' + id + '"]');
+        if (st) st.textContent = msg || 'Saved — live on every page';
+        if (!msg || !/^!/.test(msg)) window.toast('Saved — live on every page');
+        stats();
+      });
+    });
+    panel.querySelectorAll('[data-reset]').forEach(function(b){
+      b.addEventListener('click', function(){ SITE.reset(b.getAttribute('data-reset')); window.toast('Reset to default'); paint(currentTab); });
+    });
+  }
+
+  /* ── Lenses & offers ────────────────────────────────────────────────────── */
+  function lensesPanel(){
+    var pk = SITE.lensPackages();
+    var offers = SITE.get('offers');
+    var bar = SITE.get('offerBar');
+    var disp = SITE.get('display');
+    var lensRows = '<div class="lens-rows" id="lensRows">' +
+      '<div class="lens-row" style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em"><span>ID</span><span>Label</span><span>Description</span><span>Price ₹</span><span>Included</span><span></span></div>' +
+      pk.map(function(l, i){ return lensRow(l, i); }).join('') + '</div>' +
+      '<div><button type="button" class="btn btn-soft btn-sm" id="addLens"><i class="fa-solid fa-plus"></i> Add a package</button></div>' +
+      '<p class="hint" style="font-size:12.5px;color:var(--muted)">The included package is inside every frame price on the site. Others show as +/− against it. “No power” is the plano option and needs no prescription. Sunglasses use the plano option by default.</p>';
+    return '<div class="settings">' +
+      setting('lens', 'Lens packages', 'prices in rupees', lensRows, 'lensPackages') +
+      '<div style="display:flex;flex-direction:column;gap:22px">' +
+        setting('bogo', 'Buy 1 Get 1', 'the cheaper of a pair is free', form('bogo', [
+          { k: 'bogo.on', label: 'Offer is on', type: 'bool' },
+          { k: 'bogo.label', label: 'Label', type: 'text' },
+          { k: 'bogo.badge', label: 'Badge on cards', type: 'text' },
+          { k: 'bogo.brands', label: 'Eligible brands', type: 'lines', rows: 3 },
+          { k: 'bogo.cats', label: 'Eligible categories (ids: frames, sun, kids, readers)', type: 'lines', rows: 3 },
+          { k: 'bogo.note', label: 'Note under Add to bag', type: 'text' },
+          { k: 'underPrice', label: '“Under ₹” filter threshold', type: 'rupees' }
+        ], offers), 'offers') +
+        setting('bar', 'Offer bar', 'the dark strip above the header', form('bar', [
+          { k: 'on', label: 'Show the offer bar', type: 'bool' },
+          { k: 'items', label: 'Messages', type: 'lines', rows: 4 }
+        ], bar), 'offerBar') +
+        setting('disp', 'Display', '', form('disp', [
+          { k: 'showBreakdown', label: 'Show “frame ₹999 + lens ₹500” under card prices', type: 'bool' },
+          { k: 'tradeStrip', label: 'Show the “for opticians” panel on the home page', type: 'bool' }
+        ], disp), 'display') +
+      '</div>' +
+    '</div>';
+  }
+  function lensRow(l, i){
+    return '<div class="lens-row" data-i="' + i + '">' +
+      '<input value="' + esc(l.id) + '" data-f="id" placeholder="id">' +
+      '<input value="' + esc(l.label) + '" data-f="label" placeholder="Label">' +
+      '<input value="' + esc(l.desc || '') + '" data-f="desc" placeholder="Description">' +
+      '<input value="' + rs(l.price) + '" data-f="price" inputmode="decimal">' +
+      '<label class="inc"><input type="radio" name="lensInc"' + (l.included ? ' checked' : '') + ' data-f="included"> inc</label>' +
+      '<button type="button" class="x" data-rm aria-label="Remove">×</button>' +
+      '<label class="inc" style="grid-column:2/6"><input type="checkbox" data-f="plano"' + (l.plano ? ' checked' : '') + '> no-power option (needs no prescription)</label>' +
+    '</div>';
+  }
+  SAVERS.lens = function(){
+    var rows = Array.prototype.slice.call(document.querySelectorAll('#lensRows .lens-row[data-i]'));
+    var out = [], seen = {};
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i], g = function(f){ var el = r.querySelector('[data-f="' + f + '"]'); return el ? el.value.trim() : ''; };
+      var id = g('id').toLowerCase().replace(/[^a-z0-9]/g, ''), price = toPaise(g('price'));
+      if (!id || !g('label')) return '!Every package needs an id and a label';
+      if (seen[id]) return '!Duplicate id ' + id;
+      if (isNaN(price) || price < 0) return '!Price for ' + id + ' must be zero or more';
+      seen[id] = 1;
+      out.push({ id: id, label: g('label'), desc: g('desc'), price: price, included: r.querySelector('[data-f="included"]').checked, plano: r.querySelector('[data-f="plano"]').checked, sort: i + 1 });
+    }
+    if (!out.length) return '!Keep at least one package';
+    if (!out.some(function(l){ return l.included; })) out[0].included = true;
+    SITE.set('lensPackages', out);
+    return '';
+  };
+  SAVERS.bogo = function(){ var o = readForm('bogo', [
+      { k: 'bogo.on', type: 'bool' }, { k: 'bogo.label', type: 'text' }, { k: 'bogo.badge', type: 'text' }, { k: 'bogo.brands', type: 'lines' }, { k: 'bogo.cats', type: 'lines' }, { k: 'bogo.note', type: 'text' }, { k: 'underPrice', type: 'rupees' }
+    ], SITE.get('offers')); SITE.set('offers', o); return ''; };
+  SAVERS.bar = function(){ SITE.set('offerBar', readForm('bar', [{ k: 'on', type: 'bool' }, { k: 'items', type: 'lines' }], SITE.get('offerBar'))); return ''; };
+  SAVERS.disp = function(){ SITE.set('display', readForm('disp', [{ k: 'showBreakdown', type: 'bool' }, { k: 'tradeStrip', type: 'bool' }], SITE.get('display'))); return ''; };
+
+  /* ── Site content ───────────────────────────────────────────────────────── */
+  var HERO_SPEC = [
+    { k: 'kicker', label: 'Kicker chip', type: 'text' },
+    { k: 'title', label: 'Headline (line break allowed)', type: 'textarea', rows: 2 },
+    { k: 'text', label: 'Paragraph', type: 'textarea', rows: 3 },
+    { k: 'cta1.label', label: 'Primary button', type: 'text' }, { k: 'cta1.href', label: 'Primary link', type: 'text' },
+    { k: 'cta2.label', label: 'Secondary button', type: 'text' }, { k: 'cta2.href', label: 'Secondary link', type: 'text' },
+    { k: 'sku', label: 'Featured frame SKU (render with live colourways)', type: 'text' }
+  ];
+  var TRUST_SPEC = [{ k: 'on', label: 'Show the strip', type: 'bool' }, { k: 'items', label: 'Four promises', type: 'pairs', a: 'title', b: 'subtitle', ka: 'title', kb: 'sub', rows: 5 }];
+  var BEST_SPEC = [{ k: 'title', label: 'Section title', type: 'text' }, { k: 'sub', label: 'Subtitle', type: 'text' }, { k: 'skus', label: 'SKUs, in order', type: 'lines', rows: 6 }];
+  var BRAND_SPEC = [{ k: 'tagline', label: 'Footer line', type: 'textarea', rows: 2 }];
+  var CONTACT_SPEC = [{ k: 'phone', label: 'Phone, as shown', type: 'text' }, { k: 'phoneHref', label: 'Phone link (tel:…)', type: 'text' }, { k: 'whatsapp', label: 'WhatsApp link', type: 'text' }, { k: 'email', label: 'Email', type: 'text' }, { k: 'gstin', label: 'GSTIN on invoices', type: 'text' }];
+  function promoSpec(i){ return [{ k: i + '.kicker', label: 'Kicker', type: 'text' }, { k: i + '.title', label: 'Title', type: 'text' }, { k: i + '.text', label: 'Text', type: 'textarea', rows: 3 }, { k: i + '.cta', label: 'Link text', type: 'text' }, { k: i + '.href', label: 'Link', type: 'text' }, { k: i + '.dark', label: 'Dark panel', type: 'bool' }]; }
+
+  function contentPanel(){
+    var hero = SITE.get('hero'), promos = SITE.get('promos');
+    return '<div class="settings">' +
+      setting('hero', 'Home page hero', '', form('hero', HERO_SPEC, hero) +
+        '<div class="field"><label>Hero photograph · optional</label><div class="ed-photo">' +
+          '<img id="heroPrev" src="' + (hero.photo || CATALOG.img((CATALOG.bySku(hero.sku) || CATALOG.products[0]).photo)) + '" alt="">' +
+          '<div><input type="file" id="heroFile" accept="image/*"><span class="hint" style="display:block;margin-top:6px">A photograph replaces the frame render. Model wearing frames, eyes at the upper third, about 1040 × 620.</span>' +
+          (hero.photo ? '<button type="button" class="linkish" id="heroClear" style="font-size:12.5px;margin-top:6px">Remove photo, use the render</button>' : '') + '</div></div></div>', 'hero') +
+      '<div style="display:flex;flex-direction:column;gap:22px">' +
+        setting('trust', 'Trust strip', 'under the hero', form('trust', TRUST_SPEC, SITE.get('trust')), 'trust') +
+        setting('best', 'Bestsellers', 'the home page pick list', form('best', BEST_SPEC, SITE.get('bestsellers')), 'bestsellers') +
+      '</div>' +
+      promos.map(function(p, i){ return setting('promo' + i, 'Promo panel ' + (i + 1), '', form('promo' + i, promoSpec(i), promos)); }).join('') +
+      setting('brand', 'Footer', '', form('brand', BRAND_SPEC, SITE.get('brand')), 'brand') +
+      setting('contact', 'Contact', 'phone, WhatsApp, email, GSTIN', form('contact', CONTACT_SPEC, SITE.get('contact')), 'contact') +
+    '</div>';
+  }
+  var heroPhoto = null;
+  SAVERS.hero = function(){
+    var h = readForm('hero', HERO_SPEC, SITE.get('hero'));
+    if (heroPhoto !== null) h.photo = heroPhoto;
+    if (h.sku && !CATALOG.bySku(h.sku.toUpperCase())) return '!No product with SKU ' + h.sku;
+    h.sku = h.sku.toUpperCase();
+    SITE.set('hero', h); heroPhoto = null; return '';
+  };
+  SAVERS.trust = function(){ SITE.set('trust', readForm('trust', TRUST_SPEC, SITE.get('trust'))); return ''; };
+  SAVERS.best = function(){
+    var b = readForm('best', BEST_SPEC, SITE.get('bestsellers'));
+    b.skus = b.skus.map(function(s){ return s.toUpperCase(); });
+    var bad = b.skus.filter(function(s){ return !CATALOG.bySku(s); });
+    if (bad.length) return '!Unknown SKU ' + bad.join(', ');
+    SITE.set('bestsellers', b); return '';
+  };
+  [0, 1, 2].forEach(function(i){ SAVERS['promo' + i] = function(){ SITE.set('promos', readForm('promo' + i, promoSpec(i), SITE.get('promos'))); return ''; }; });
+  SAVERS.brand = function(){ SITE.set('brand', readForm('brand', BRAND_SPEC, SITE.get('brand'))); return ''; };
+  SAVERS.contact = function(){ SITE.set('contact', readForm('contact', CONTACT_SPEC, SITE.get('contact'))); return ''; };
+
+  /* ── Stores & delivery ──────────────────────────────────────────────────── */
+  var DELIV_SPEC = [
+    { k: 'retail.flat', label: 'Retail delivery charge (₹)', type: 'rupees' },
+    { k: 'retail.freeOver', label: 'Retail: free delivery over (₹)', type: 'rupees' },
+    { k: 'retail.courierOutside', label: 'Outside the van area, send retail orders by courier', type: 'bool' },
+    { k: 'retail.courierFlat', label: 'Courier charge (₹)', type: 'rupees' },
+    { k: 'retail.courierDays', label: 'Courier time, as shown', type: 'text' },
+    { k: 'retail.vanDays', label: 'Van time, as shown', type: 'text' },
+    { k: 'trade.flat', label: 'Trade delivery charge (₹)', type: 'rupees' },
+    { k: 'trade.freeOver', label: 'Trade: free delivery over (₹)', type: 'rupees' },
+    { k: 'trade.minOrder', label: 'Trade order minimum (₹)', type: 'rupees' },
+    { k: 'areas', label: 'Own-van delivery area', type: 'pairs', a: 'PIN prefix', b: 'area', ka: 'prefix', kb: 'area', rows: 6 },
+    { k: 'slots', label: 'Delivery slots', type: 'lines', rows: 4 }
+  ];
+  var EYE_SPEC = [
+    { k: 'on', label: 'Online booking is open', type: 'bool' },
+    { k: 'slots', label: 'Slots each day (HH:MM)', type: 'lines', rows: 5 },
+    { k: 'daysAhead', label: 'Days bookable ahead', type: 'int' },
+    { k: 'minutes', label: 'Appointment length, minutes', type: 'int' },
+    { k: 'note', label: 'Note on the booking page', type: 'textarea', rows: 3 }
+  ];
+  function storeSpec(i){ return [{ k: i + '.name', label: 'Store name', type: 'text' }, { k: i + '.city', label: 'City', type: 'text' }, { k: i + '.address', label: 'Address', type: 'text' }, { k: i + '.phone', label: 'Phone', type: 'text' }, { k: i + '.hours', label: 'Hours', type: 'text' }, { k: i + '.mapQuery', label: 'Google Maps search text', type: 'text' }, { k: i + '.eyeTest', label: 'Eye tests here', type: 'bool' }]; }
+
+  function storesPanel(){
+    var stores = SITE.stores();
+    return '<div class="settings">' +
+      '<div style="display:flex;flex-direction:column;gap:22px">' +
+        stores.map(function(s, i){ return setting('store' + i, 'Store ' + (i + 1), s.id, form('store' + i, storeSpec(i), stores) + (stores.length > 1 ? '<div><button type="button" class="linkish" data-rmstore="' + i + '" style="font-size:13px;color:#B3261E">Remove this store</button></div>' : '')); }).join('') +
+        '<div><button type="button" class="btn btn-soft btn-sm" id="addStore"><i class="fa-solid fa-plus"></i> Add a store</button></div>' +
+      '</div>' +
+      '<div style="display:flex;flex-direction:column;gap:22px">' +
+        setting('deliv', 'Delivery', 'charges, thresholds, van area', form('deliv', DELIV_SPEC, SITE.get('delivery')), 'delivery') +
+        setting('eye', 'Eye tests', '', form('eye', EYE_SPEC, SITE.get('eyeTest')), 'eyeTest') +
+      '</div>' +
+    '</div>';
+  }
+  SAVERS.deliv = function(){ SITE.set('delivery', readForm('deliv', DELIV_SPEC, SITE.get('delivery'))); return ''; };
+  SAVERS.eye = function(){ SITE.set('eyeTest', readForm('eye', EYE_SPEC, SITE.get('eyeTest'))); return ''; };
+  function storeSaver(i){ return function(){ var s = readForm('store' + i, storeSpec(i), SITE.stores()); if (!s[i].name || !s[i].city) return '!A store needs a name and a city'; SITE.set('stores', s); return ''; }; }
+
+  /* ── Bookings & reservations ───────────────────────────────────────────── */
+  function bookingsPanel(){
+    var bs = Store.bookings(), rs2 = Store.reservations();
+    var fmt = { weekday: 'short', day: 'numeric', month: 'short' };
+    return '<div class="settings">' +
+      '<div class="setting"><h3>Eye tests <small>' + bs.length + ' booked</small></h3>' +
+        (bs.length ? '<div class="table-wrap"><table style="min-width:0"><thead><tr><th>When</th><th>Who</th><th>Store</th><th>Status</th></tr></thead><tbody>' +
+          bs.map(function(b){ var s = SITE.store(b.store); return '<tr><td><b>' + esc(new Date(b.date + 'T00:00:00').toLocaleDateString('en-IN', fmt)) + ' · ' + esc(b.slot) + '</b><br><span style="color:var(--muted);font-size:12px">' + esc(b.ref) + '</span></td><td>' + esc(b.customer) + '<br><span style="color:var(--muted);font-size:12px">' + esc(b.phone) + (b.note ? ' · ' + esc(b.note) : '') + '</span></td><td>' + esc(s ? s.name : '') + '</td><td><select class="sort mini" data-book="' + esc(b.ref) + '">' + ['booked', 'done', 'no-show', 'cancelled'].map(function(x){ return '<option' + (x === b.status ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select></td></tr>'; }).join('') +
+          '</tbody></table></div>' : '<p style="font-size:14px;color:var(--muted)">No bookings yet. They arrive from the “Book eye test” page.</p>') +
+      '</div>' +
+      '<div class="setting"><h3>Reservations <small>try in store</small></h3>' +
+        (rs2.length ? '<div class="table-wrap"><table style="min-width:0"><thead><tr><th>Frame</th><th>Who</th><th>Store</th><th>Status</th></tr></thead><tbody>' +
+          rs2.map(function(r){ var s = SITE.store(r.store); return '<tr><td><b>' + esc(r.name) + '</b><br><span style="color:var(--muted);font-size:12px">' + esc(r.size || '') + ' · ' + esc(r.sku) + ' · ' + esc(r.ref) + '</span></td><td>' + esc(r.customer) + '<br><span style="color:var(--muted);font-size:12px">' + esc(r.phone) + '</span></td><td>' + esc(s ? s.name : '') + '</td><td><select class="sort mini" data-resv="' + esc(r.ref) + '">' + ['requested', 'ready', 'collected', 'expired', 'cancelled'].map(function(x){ return '<option' + (x === r.status ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select></td></tr>'; }).join('') +
+          '</tbody></table></div>' : '<p style="font-size:14px;color:var(--muted)">No reservations yet. Any frame can be set aside from its product page.</p>') +
+      '</div>' +
+    '</div>';
+  }
+
+  /* ── Needs attention ────────────────────────────────────────────────────── */
+  function attentionPanel(){
+    var orders = Store.orders().filter(function(o){ var st = Store.statusOf(o); return st === 'awaiting prescription' || (st === 'confirmed' && o.items.some(function(i){ return i.needsRx; }) && (!o.rx || o.rx.method === 'later' || o.rx.method === 'call')); });
+    var low = CATALOG.products.filter(function(p){ return p.stock <= 3; }).sort(function(a,b){ return a.stock - b.stock; });
+    var html = '';
+    html += '<h3 style="font-size:17px;margin-bottom:10px">Orders waiting on a prescription</h3>' +
+      (orders.length ? ordersTable(orders) : '<div class="empty" style="padding:24px"><p>None — every powered order has its power.</p></div>');
+    html += '<h3 style="font-size:17px;margin:26px 0 10px">Running low</h3>' +
+      (low.length ? stockTable(low) : '<div class="empty" style="padding:24px"><p>Every SKU has more than three in stock.</p></div>');
+    return html;
+  }
+
+  var currentTab = 'orders';
+  function paint(tab){
+    currentTab = tab;
+    var panel = document.getElementById('panel');
+    if (tab === 'orders') panel.innerHTML = ordersTable();
+    if (tab === 'stock')  panel.innerHTML = stockTable(CATALOG.products);
+    if (tab === 'lowest') panel.innerHTML = attentionPanel();
+    if (tab === 'products') {
+      panel.innerHTML = productsPanel();
+      document.getElementById('addProduct').addEventListener('click', function(){ wireEditor(null); });
+      panel.querySelectorAll('[data-edit-sku]').forEach(function(b){
+        b.addEventListener('click', function(){ wireEditor(CATALOG.bySku(b.getAttribute('data-edit-sku'))); });
+      });
+    }
+    if (tab === 'import') {
+      panel.innerHTML = importPanel();
+      document.getElementById('impSample').addEventListener('click', function(){
+        document.getElementById('impText').value =
+          'SKU, Name, Trade price, Stock, Retail price\n' +
+          'A1-FR-2102, Rille matte black, 720, 140, 849\n' +
+          'A1-FR-2105, Meridian tortoise, 700, 60, 999\n' +
+          'A1-LN-5101, Single vision stock, 175, 3000\n' +
+          'A1-CL-6101, Monthly disposable, 560, 0, 899\n' +
+          'A1-FR-9999, Unknown frame, 500, 10, 900\n' +
+          'A1-IN-7101, Lensmeter, 99000, 4';
+      });
+      document.getElementById('impPreview').addEventListener('click', function(){
+        renderPreview(parseSheet(document.getElementById('impText').value));
+      });
+    }
+    if (tab === 'stock' || tab === 'lowest') {
+      var dl = document.getElementById('dlCsv');
+      if (dl) dl.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csvOf());
+      var sc = document.getElementById('saveCells');
+      if (sc) sc.addEventListener('click', function(){
+        var n = 0;
+        panel.querySelectorAll('input[data-edit]').forEach(function(inp){
+          var p = CATALOG.bySku(inp.getAttribute('data-sku')); if (!p) return;
+          var f = inp.getAttribute('data-edit');
+          if (f === 'stock') {
+            var st = parseInt(inp.value, 10);
+            if (!isNaN(st) && st >= 0 && st !== p.stock) { CATALOG.setOverride(p.sku, { stock: st }); n++; }
+          } else {
+            var v = toPaise(inp.value);
+            if (!isNaN(v) && v > 0 && v !== p[f]) { var patch = {}; patch[f] = v; CATALOG.setOverride(p.sku, patch); n++; }
+          }
+        });
+        document.getElementById('cellStatus').textContent = n ? n + ' change' + (n === 1 ? '' : 's') + ' saved' : 'No changes';
+        if (n) { window.toast(n + ' change' + (n === 1 ? '' : 's') + ' saved — live on every page'); stats(); paint(tab); }
+      });
+      var ro = document.getElementById('resetOvr');
+      if (ro) ro.addEventListener('click', function(){ if (confirm('Discard every price, stock, photo and product edit made in this browser?')) CATALOG.clearEdits(); });
+    }
+    if (tab === 'lenses') {
+      panel.innerHTML = lensesPanel();
+      document.getElementById('addLens').addEventListener('click', function(){
+        var rows = document.getElementById('lensRows');
+        rows.insertAdjacentHTML('beforeend', lensRow({ id: '', label: '', desc: '', price: 0 }, rows.querySelectorAll('.lens-row[data-i]').length));
+        wireLensRows();
+      });
+      wireLensRows();
+      wireSettings(panel);
+    }
+    if (tab === 'content') {
+      panel.innerHTML = contentPanel();
+      wireSettings(panel);
+      document.getElementById('heroFile').addEventListener('change', function(e){
+        var file = e.target.files && e.target.files[0]; if (!file) return;
+        var reader = new FileReader();
+        reader.onload = function(){
+          var im = new Image();
+          im.onload = function(){
+            var max = 1400, k = Math.min(1, max / Math.max(im.width, im.height));
+            var c = document.createElement('canvas'); c.width = Math.round(im.width * k); c.height = Math.round(im.height * k);
+            c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+            heroPhoto = c.toDataURL('image/jpeg', 0.82);
+            document.getElementById('heroPrev').src = heroPhoto;
+          };
+          im.src = reader.result;
+        };
+        reader.readAsDataURL(file);
+      });
+      var hc = document.getElementById('heroClear');
+      if (hc) hc.addEventListener('click', function(){ heroPhoto = ''; var h = SITE.get('hero'); h.photo = ''; SITE.set('hero', h); window.toast('Hero photo removed'); paint('content'); });
+    }
+    if (tab === 'stores') {
+      panel.innerHTML = storesPanel();
+      SITE.stores().forEach(function(s, i){ SAVERS['store' + i] = storeSaver(i); });
+      wireSettings(panel);
+      document.getElementById('addStore').addEventListener('click', function(){
+        var s = SITE.stores();
+        s.push({ id: 'store' + (s.length + 1) + '-' + Math.random().toString(36).slice(2, 6), name: 'New store', city: '', address: '', phone: '', hours: '', mapQuery: '', eyeTest: true });
+        SITE.set('stores', s); paint('stores');
+      });
+      panel.querySelectorAll('[data-rmstore]').forEach(function(b){
+        b.addEventListener('click', function(){ var s = SITE.stores(); s.splice(+b.getAttribute('data-rmstore'), 1); SITE.set('stores', s); paint('stores'); });
+      });
+    }
+    if (tab === 'bookings') {
+      panel.innerHTML = bookingsPanel();
+      panel.querySelectorAll('select[data-book]').forEach(function(sel){ sel.addEventListener('change', function(){ Store.setBookingStatus(sel.getAttribute('data-book'), sel.value); window.toast('Booking marked ' + sel.value); stats(); }); });
+      panel.querySelectorAll('select[data-resv]').forEach(function(sel){ sel.addEventListener('change', function(){ Store.setReservationStatus(sel.getAttribute('data-resv'), sel.value); window.toast('Reservation marked ' + sel.value); stats(); }); });
+    }
+
+    panel.querySelectorAll('select[data-ref]').forEach(function(sel){
+      sel.addEventListener('change', function(){
+        Store.setStatus(sel.getAttribute('data-ref'), sel.value);
+        window.toast('Order marked ' + sel.value);
+        stats();
+      });
+    });
+  }
+  function wireLensRows(){
+    document.querySelectorAll('#lensRows [data-rm]').forEach(function(b){
+      b.onclick = function(){ b.closest('.lens-row').remove(); };
+    });
+  }
+
+  document.querySelectorAll('#tabs .tab').forEach(function(t){
+    t.addEventListener('click', function(){
+      document.querySelectorAll('#tabs .tab').forEach(function(o){ o.setAttribute('aria-selected', String(o === t)); });
+      paint(t.getAttribute('data-t'));
+    });
+  });
+
+  /* ── Login gate ───────────────────────────────────────────────────────────
+     Preview only: the credentials are constants so the client can try it.
+     On the live build this is a real login — the page never holds a
+     password, and the tables themselves reject reads from anyone but the
+     owner, so a bypassed login screen would still show nothing. */
+  var SESSION = 'a1opticals_admin_session_v1';
+  var OWNER = { email: 'owner@a1opticals.in', pass: 'a1trade', name: 'A1 Opticals · owner' };
+
+  function session(){
+    try { return JSON.parse(sessionStorage.getItem(SESSION) || localStorage.getItem(SESSION) || 'null'); } catch(e){ return null; }
+  }
+  function signIn(remember){
+    var s = { email: OWNER.email, name: OWNER.name, at: Date.now() };
+    try { (remember ? localStorage : sessionStorage).setItem(SESSION, JSON.stringify(s)); } catch(e){}
+    return s;
+  }
+  function signOut(){
+    try { sessionStorage.removeItem(SESSION); localStorage.removeItem(SESSION); } catch(e){}
+    location.reload();
+  }
+
+  function showDash(s){
+    document.getElementById('loginWrap').hidden = true;
+    document.getElementById('dash').hidden = false;
+    document.getElementById('whoami').textContent = s.name;
+    document.getElementById('signOut').addEventListener('click', signOut);
+    stats();
+    var want = new URLSearchParams(location.search).get('tab');
+    var tb = want && document.querySelector('#tabs .tab[data-t="' + want + '"]');
+    if (tb) tb.click(); else paint('orders');
+  }
+
+  var s = session();
+  if (s) {
+    showDash(s);
+  } else {
+    document.getElementById('loginWrap').hidden = false;
+    document.getElementById('loginForm').addEventListener('submit', function(e){
+      e.preventDefault();
+      var em = document.getElementById('lEmail').value.trim().toLowerCase();
+      var pw = document.getElementById('lPass').value;
+      if (em === OWNER.email && pw === OWNER.pass) {
+        showDash(signIn(document.getElementById('lRemember').checked));
+        window.toast('Signed in as ' + OWNER.name);
+      } else {
+        document.getElementById('lErr').hidden = false;
+        document.getElementById('lPass').value = '';
+        document.getElementById('lPass').focus();
+      }
+    });
+  }
+})();
+</script>
+<style>@media(max-width:900px){ #impGrid{ grid-template-columns:1fr !important } #stats{ grid-template-columns:1fr 1fr !important } }</style>
+</body>
+</html>
