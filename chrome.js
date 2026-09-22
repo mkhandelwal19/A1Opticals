@@ -181,6 +181,43 @@
         document.body.classList.toggle('drawer-open', open);
       }
       menuBtn.addEventListener('click', function () { openDrawer(drawer.hidden); });
+
+      /* Condense on scroll-down, restore on scroll-up.
+         The mobile header is three stacked rows — logo, search, categories —
+         and all three are sticky, so 161 px of a 812 px phone screen is spent
+         before any product is visible, permanently, while scrolling a
+         catalogue. Someone shopping downward does not need the search field
+         or the category rail in front of them; someone scrolling back up
+         usually does. The two rows collapse together, which returns about a
+         fifth of the screen, and the logo, bag and menu never move.
+
+         CSS does the animating; this only sets a class. With JS off the
+         header stays exactly as it was. */
+      (function condenseHeader(){
+        var head = document.querySelector('.head');
+        if (!head) return;
+        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+        var last = window.scrollY, ticking = false;
+        var DOWN_AT = 8;   // ignore scroll jitter and rubber-banding
+        var CLEAR_AT = 180; // never condense while still near the top
+
+        function update(){
+          var y = window.scrollY;
+          if (y < CLEAR_AT) {
+            head.classList.remove('is-condensed');
+          } else if (y - last > DOWN_AT) {
+            head.classList.add('is-condensed');
+          } else if (last - y > DOWN_AT) {
+            head.classList.remove('is-condensed');
+          }
+          last = y;
+          ticking = false;
+        }
+        window.addEventListener('scroll', function(){
+          if (!ticking) { ticking = true; requestAnimationFrame(update); }
+        }, { passive: true });
+      })();
       document.getElementById('drawerClose').addEventListener('click', function () { openDrawer(false); });
       drawer.addEventListener('click', function (e) { if (e.target === drawer) openDrawer(false); });
 

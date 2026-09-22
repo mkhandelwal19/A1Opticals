@@ -7,3 +7,10 @@ Thumbs.db
 
 # Signed agreement stays local; the repo is public.
 contract/
+
+# The API's SQLite database lives beside the code but never in the repo.
+api/data/
+
+# Internal pricing and scope working draft. Stays on disk; never in the public
+# repo — it contains proposed prices and margin reasoning.
+PROPOSAL.md
