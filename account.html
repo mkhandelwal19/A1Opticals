@@ -23,11 +23,12 @@
       <h1>Your account</h1>
     </div>
 
-    <div class="note" style="margin:6px 0 26px">
+    <div class="note" style="margin:6px 0 26px" id="modeNote">
       <i class="fa-solid fa-circle-info"></i>
       <div>In this preview, orders, your prescription and saved details live in <strong>this browser only</strong>.
-      On the live store they sit behind a phone-OTP login, so they follow you between your phone and your laptop.</div>
+      On the live store they sit behind an email-code login, so they follow you between your phone and your laptop.</div>
     </div>
+    <div id="who" style="margin:-10px 0 20px"></div>
 
     <div class="tabs" role="tablist" id="tabs">
       <button class="tab" role="tab" aria-selected="true" data-t="orders">Orders</button>
@@ -43,6 +44,7 @@
 
 <script src="catalog.js"></script>
 <script src="site.js"></script>
+<script src="commerce.js"></script>
 <script src="store.js"></script>
 <script src="chrome.js"></script>
 <script>
@@ -52,42 +54,163 @@
   var wrap = document.getElementById('wrap');
   var fmt = { day: 'numeric', month: 'long', year: 'numeric' };
 
+  var me = null;          /* the signed-in customer, or null */
+  var orderList = null;   /* the last list fetched */
+
+  function whoLine(){
+    var host = document.getElementById('who');
+    if (!Store.remote) { host.innerHTML = ''; return; }
+    host.innerHTML = me
+      ? '<span style="font-size:14px;color:var(--ink-2)">Signed in as <strong>' + esc(me.email) + '</strong> · <button type="button" class="linkish" id="signOutBtn">Sign out</button></span>'
+      : '';
+  }
+
+  function signInPanel(){
+    return '<div class="panel" style="max-width:560px">' +
+      '<h3>Sign in to see your orders</h3>' +
+      '<p style="color:var(--ink-2);font-size:14.5px;margin-bottom:16px">No password. Type the email you ordered with and we send a six-digit code. Guest orders (placed without keeping an account) are not listed here — track them by reference, or email ' + esc(SITE.returnsPolicy().email) + ' for a return.</p>' +
+      '<form id="otpForm" novalidate>' +
+        '<div class="field"><label for="siEmail">Email</label><input id="siEmail" type="email" autocomplete="email" required value="' + esc((Store.getUser() || {}).email || '') + '"></div>' +
+        '<div class="field" id="codeField" hidden><label for="siCode">The six-digit code we emailed</label><input id="siCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code"><span class="hint" id="codeHint"></span></div>' +
+        '<p class="err" id="siErr" hidden style="color:#B3261E;font-size:13px;margin:-6px 0 12px"></p>' +
+        '<div style="display:flex;gap:10px;flex-wrap:wrap"><button type="submit" class="btn btn-primary" id="siBtn">Email me a code</button><button type="button" class="linkish" id="siBack" hidden style="font-size:13.5px">Different email</button></div>' +
+      '</form>' +
+    '</div>';
+  }
+  function wireSignIn(){
+    var form = document.getElementById('otpForm'); if (!form) return;
+    var stage = 'email';
+    var err = document.getElementById('siErr');
+    form.addEventListener('submit', function(e){
+      e.preventDefault();
+      var email = document.getElementById('siEmail').value.trim();
+      var btn = document.getElementById('siBtn');
+      err.hidden = true;
+      btn.disabled = true;
+      if (stage === 'email') {
+        Store.auth.requestOtp(email).then(function(r){
+          stage = 'code';
+          document.getElementById('codeField').hidden = false;
+          document.getElementById('siBack').hidden = false;
+          document.getElementById('siEmail').readOnly = true;
+          btn.textContent = 'Sign in';
+          document.getElementById('codeHint').textContent = r.devCode ? 'Development: the code is ' + r.devCode + ' (no mail provider configured).' : 'Check your inbox — it can take a minute. The code works for ten minutes.';
+          document.getElementById('siCode').focus();
+        }).catch(function(e2){ err.hidden = false; err.textContent = e2.message || 'Could not send a code'; }).then(function(){ btn.disabled = false; });
+      } else {
+        Store.auth.verifyOtp(email, document.getElementById('siCode').value.trim()).then(function(r){
+          me = r.customer; window.toast('Signed in'); paint('orders');
+        }).catch(function(e2){ err.hidden = false; err.textContent = e2.message || 'That code is not right'; btn.disabled = false; });
+      }
+    });
+    document.getElementById('siBack').addEventListener('click', function(){ stage = 'email'; document.getElementById('codeField').hidden = true; document.getElementById('siBack').hidden = true; document.getElementById('siEmail').readOnly = false; document.getElementById('siBtn').textContent = 'Email me a code'; });
+  }
+
+  function orderCard(o){
+    var when = new Date(o.placedAt);
+    var st = o.status;
+    var rxMissing = o.items.some(function(i){ return i.needsRx; }) && (!o.rx || o.rx.method === 'later') && st !== 'cancelled' && st !== 'delivered';
+    var elig = o.returnEligibility || {};
+    var policy = SITE.returnsPolicy();
+    var rets = o.returns || [], rs = o.refunds || [];
+    var count = o.items.reduce(function(n,i){ return n + i.qty; }, 0);
+    var returnsLine = '';
+    if (st === 'delivered') {
+      if (elig.ok) returnsLine = '<div class="note ok" style="margin-top:14px"><i class="fa-solid fa-rotate-left"></i><div>Returns open until <strong>' + esc(Commerce.dateLong(elig.until)) + '</strong>. <button type="button" class="linkish" data-return="' + esc(o.ref) + '">Return or refund</button></div></div>';
+      else if (elig.reason === 'guest') returnsLine = '<div class="note" style="margin-top:14px"><i class="fa-solid fa-envelope"></i><div>Placed as a guest, so returns are by email: write to <a href="mailto:' + esc(policy.email) + '?subject=' + encodeURIComponent('Return · order ' + o.ref) + '" style="color:var(--teal);font-weight:600">' + esc(policy.email) + '</a> quoting <strong>' + esc(o.ref) + '</strong>' + (elig.until ? ' before ' + esc(Commerce.dateLong(elig.until)) : '') + '.</div></div>';
+      else if (elig.reason === 'window-closed') returnsLine = '<p style="margin-top:12px;font-size:13.5px;color:var(--muted)">The return window closed on ' + esc(Commerce.dateLong(elig.until)) + '.</p>';
+    }
+    return '<div class="panel" style="margin-bottom:14px">' +
+      '<div style="display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; align-items:baseline">' +
+        '<div>' +
+          '<div class="mono">' + esc(o.ref) + (o.mode === 'trade' ? ' · trade' : '') + (o.registered ? '' : ' · guest') + '</div>' +
+          '<h3 style="margin:6px 0 0">' + Store.rupees(o.total) + '</h3>' +
+          '<div style="color:var(--muted); font-size:13.5px; margin-top:4px">' +
+            when.toLocaleDateString('en-IN', fmt) + ' · ' + count + ' item' + (count === 1 ? '' : 's') +
+            (o.delivery && o.delivery.method === 'collect' ? ' · collect from store' : '') +
+            (o.payment && o.payment.status && o.payment.status !== 'paid' ? ' · ' + esc(o.payment.status) : '') +
+          '</div>' +
+        '</div>' +
+        '<span class="pill ' + (st === 'delivered' ? 'ok' : st === 'cancelled' ? 'grey' : st === 'awaiting prescription' || st === Commerce.PENDING ? 'warn' : 'ok') + '">' + esc(st) + '</span>' +
+      '</div>' +
+      (rxMissing ? '<div class="note" style="margin-top:14px"><i class="fa-solid fa-glasses"></i><div>This order needs your prescription before the lab starts. <button type="button" class="linkish" data-rx-for="' + esc(o.ref) + '">Add it now</button></div></div>' : '') +
+      returnsLine +
+      (rets.length || rs.length ? '<div style="margin-top:12px">' +
+        rets.map(function(r){ return '<div class="sum" style="font-size:14px"><span>Return · ' + r.items.map(function(i){ return i.qty + ' × ' + esc(i.name); }).join(', ') + (r.note ? '<small style="display:block;color:var(--muted)">' + esc(r.note) + '</small>' : '') + '</span><span class="pill ' + (r.status === 'refunded' ? 'ok' : r.status === 'rejected' || r.status === 'cancelled' ? 'grey' : 'warn') + '">' + esc(r.status) + '</span></div>'; }).join('') +
+        rs.map(function(r){ return '<div class="sum" style="font-size:14px"><span>Refund ' + Store.rupees(r.amount) + '<small style="display:block;color:var(--muted)">' + (r.channel === 'manual' ? 'by bank transfer' : 'to the original payment method') + '</small></span><span class="pill ' + (r.status === 'processed' ? 'ok' : r.status === 'failed' ? 'grey' : 'warn') + '">' + esc(r.status) + '</span></div>'; }).join('') +
+      '</div>' : '') +
+      '<div style="display:flex; gap:10px; margin:16px 0; flex-wrap:wrap">' +
+        o.items.map(function(i){
+          return '<img src="' + CATALOG.img(i.photo) + '" alt="' + esc(i.name) + '" title="' + esc(i.name) + '" loading="lazy" decoding="async" style="width:64px; height:48px; object-fit:cover; border:1px solid var(--line)">';
+        }).join('') +
+      '</div>' +
+      '<div style="display:flex; gap:10px; flex-wrap:wrap">' +
+        '<a class="btn btn-soft btn-sm" href="track.html?ref=' + encodeURIComponent(o.ref) + '">Track</a>' +
+        '<a class="btn btn-soft btn-sm" href="order.html?ref=' + encodeURIComponent(o.ref) + '">' + (o.mode === 'trade' || (o.customer && o.customer.gstin) ? 'View invoice' : 'View receipt') + '</a>' +
+        '<button class="btn btn-soft btn-sm" data-reorder="' + esc(o.ref) + '">Order again</button>' +
+        (elig.ok ? '<button class="btn btn-primary btn-sm" data-return="' + esc(o.ref) + '"><i class="fa-solid fa-rotate-left"></i> Return or refund</button>' : '') +
+      '</div>' +
+    '</div>';
+  }
+
   function ordersTab(){
-    var orders = Store.orders();
+    if (Store.remote && !me) return signInPanel();
+    var orders = orderList || [];
     if (!orders.length){
       return '<div class="empty"><h3>No orders yet</h3>' +
-        '<p>When you place one it will appear here with its receipt and tracking.</p>' +
-        '<p style="margin-top:18px"><a class="btn btn-primary" href="shop.html">Go to the shop</a></p></div>';
+        '<p>When you place one it will appear here with its receipt and tracking.' + (Store.remote ? ' Guest orders are tracked by reference instead.' : '') + '</p>' +
+        '<p style="margin-top:18px"><a class="btn btn-primary" href="shop.html">Go to the shop</a> <a class="btn btn-soft" href="track.html">Track an order</a></p></div>';
     }
-    return orders.map(function(o){
-      var when = new Date(o.placedAt);
-      var st = Store.statusOf(o);
-      var rxMissing = o.items.some(function(i){ return i.needsRx; }) && (!o.rx || o.rx.method === 'later');
-      return '<div class="panel" style="margin-bottom:14px">' +
-        '<div style="display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; align-items:baseline">' +
-          '<div>' +
-            '<div class="mono">' + esc(o.ref) + (o.mode === 'trade' ? ' · trade' : '') + '</div>' +
-            '<h3 style="margin:6px 0 0">' + Store.rupees(o.total) + '</h3>' +
-            '<div style="color:var(--muted); font-size:13.5px; margin-top:4px">' +
-              when.toLocaleDateString('en-IN', fmt) + ' · ' + o.items.reduce(function(n,i){ return n + i.qty; }, 0) + ' item' + (o.items.reduce(function(n,i){ return n + i.qty; }, 0) === 1 ? '' : 's') +
-              (o.delivery && o.delivery.method === 'collect' ? ' · collect from store' : '') +
-            '</div>' +
-          '</div>' +
-          '<span class="pill ' + (st === 'delivered' ? 'ok' : st === 'cancelled' ? 'grey' : st === 'awaiting prescription' ? 'warn' : 'ok') + '">' + esc(st) + '</span>' +
-        '</div>' +
-        (rxMissing ? '<div class="note" style="margin-top:14px"><i class="fa-solid fa-glasses"></i><div>This order needs your prescription before the lab starts. <button type="button" class="linkish" data-rx-for="' + esc(o.ref) + '">Add it now</button></div></div>' : '') +
-        '<div style="display:flex; gap:10px; margin:16px 0; flex-wrap:wrap">' +
-          o.items.map(function(i){
-            return '<img src="' + CATALOG.img(i.photo) + '" alt="' + esc(i.name) + '" title="' + esc(i.name) + '" loading="lazy" decoding="async" style="width:64px; height:48px; object-fit:cover; border:1px solid var(--line)">';
-          }).join('') +
-        '</div>' +
-        '<div style="display:flex; gap:10px; flex-wrap:wrap">' +
-          '<a class="btn btn-soft btn-sm" href="track.html?ref=' + encodeURIComponent(o.ref) + '">Track</a>' +
-          '<a class="btn btn-soft btn-sm" href="order.html?ref=' + encodeURIComponent(o.ref) + '">' + (o.mode === 'trade' || (o.customer && o.customer.gstin) ? 'View invoice' : 'View receipt') + '</a>' +
-          '<button class="btn btn-soft btn-sm" data-reorder="' + esc(o.ref) + '">Order again</button>' +
-        '</div>' +
-      '</div>';
-    }).join('');
+    return orders.map(orderCard).join('');
+  }
+
+  /* The return dialog: pick what is coming back, how, and why. The amount
+     shown is what commerce.js computes; the server computes it again. */
+  function returnModal(o){
+    var elig = o.returnEligibility;
+    if (!elig || !elig.ok) return;
+    var m = window.modal(
+      '<h2>Return or refund</h2>' +
+      '<p>Order ' + esc(o.ref) + ' · returns open until ' + esc(Commerce.dateLong(elig.until)) + '. Tick what is coming back.</p>' +
+      '<div style="margin:14px 0">' +
+        elig.items.map(function(c){
+          var i = c.item;
+          return '<label class="check" style="align-items:center;gap:12px"><input type="checkbox" data-idx="' + c.idx + '" checked><span style="flex:1">' + esc(i.name) + ' <small style="color:var(--muted)">' + esc(i.variant) + (i.lens ? ' · ' + esc(i.lens) : '') + '</small></span>' +
+            (c.left > 1 ? '<select class="sort mini" data-qty="' + c.idx + '">' + Array.from({ length: c.left }, function(_, k){ return '<option value="' + (k + 1) + '"' + (k + 1 === c.left ? ' selected' : '') + '>' + (k + 1) + '</option>'; }).join('') + '</select>' : '<span class="mono">1</span>') + '</label>';
+        }).join('') +
+      '</div>' +
+      '<div class="field"><label for="retWhy">Reason</label><select id="retWhy" class="sort" style="width:100%"><option>Does not fit</option><option>Power is not right</option><option>Changed my mind</option><option>Damaged or faulty</option><option>Wrong item sent</option><option>Other</option></select></div>' +
+      '<div class="field"><label for="retNote">Anything we should know (optional)</label><textarea id="retNote" rows="2"></textarea></div>' +
+      '<div class="field"><label>How it comes back</label><div class="opt-row" id="retHow">' +
+        '<button type="button" class="opt-btn" data-how="collect" aria-pressed="true">Van collects</button>' +
+        '<button type="button" class="opt-btn" data-how="store" aria-pressed="false">I bring it to the store</button>' +
+        '<button type="button" class="opt-btn" data-how="courier" aria-pressed="false">Courier label</button>' +
+      '</div></div>' +
+      '<div class="sum total" style="margin-top:6px"><span>Refund</span><span id="retAmt"></span></div>' +
+      '<p class="fine" style="text-align:left">Back to the original payment method within five working days of receipt. Delivery is refunded when the whole order comes back.</p>' +
+      '<p class="err" id="retErr" hidden style="color:#B3261E"></p>' +
+      '<div class="actions"><button type="button" class="btn btn-primary" id="retGo">Request return</button><button type="button" class="btn btn-soft" data-close>Cancel</button></div>'
+    );
+    var how = 'collect';
+    function picked(){
+      var items = [];
+      m.querySelectorAll('input[data-idx]').forEach(function(cb){ if (!cb.checked) return; var idx = +cb.getAttribute('data-idx'); var q = m.querySelector('select[data-qty="' + idx + '"]'); items.push({ idx: idx, qty: q ? +q.value : 1 }); });
+      return items;
+    }
+    function amount(){ m.querySelector('#retAmt').textContent = Store.rupees(Commerce.refundForReturn(o, picked())); }
+    m.querySelectorAll('input[data-idx], select[data-qty]').forEach(function(el){ el.addEventListener('change', amount); });
+    m.querySelectorAll('#retHow .opt-btn').forEach(function(b){ b.addEventListener('click', function(){ how = b.getAttribute('data-how'); m.querySelectorAll('#retHow .opt-btn').forEach(function(x){ x.setAttribute('aria-pressed', String(x === b)); }); }); });
+    amount();
+    m.querySelector('#retGo').addEventListener('click', function(){
+      var items = picked();
+      var err = m.querySelector('#retErr');
+      if (!items.length) { err.hidden = false; err.textContent = 'Tick at least one item.'; return; }
+      var reason = m.querySelector('#retWhy').value + (m.querySelector('#retNote').value.trim() ? ' — ' + m.querySelector('#retNote').value.trim() : '');
+      this.disabled = true;
+      Store.requestReturn(o, items, reason, how).then(function(){
+        window.closeModal(); window.toast('Return requested — we confirm within a working day'); paint('orders');
+      }).catch(function(e){ err.hidden = false; err.textContent = e.message || 'Could not request that return'; m.querySelector('#retGo').disabled = false; });
+    });
   }
 
   function rxTab(){
@@ -179,11 +302,24 @@
   var current = 'orders';
   function paint(tab){
     current = tab;
-    wrap.innerHTML = tab === 'orders' ? ordersTab() : tab === 'rx' ? rxTab() : tab === 'details' ? detailsTab() : visitsTab();
-    bind();
+    whoLine();
+    if (tab !== 'orders') { wrap.innerHTML = tab === 'rx' ? rxTab() : tab === 'details' ? detailsTab() : visitsTab(); bind(); return; }
+    if (Store.remote && !me) { wrap.innerHTML = ordersTab(); bind(); return; }
+    wrap.innerHTML = '<div class="empty"><p>Loading your orders…</p></div>';
+    Store.fetchOrders().then(function(list){ orderList = list; wrap.innerHTML = ordersTab(); bind(); })
+      .catch(function(e){ if (e.status === 401) { me = null; wrap.innerHTML = ordersTab(); bind(); return; } wrap.innerHTML = '<div class="empty"><h3>Could not load your orders</h3><p>' + esc(e.message || '') + '</p></div>'; });
   }
 
   function bind(){
+    wireSignIn();
+    var so = document.getElementById('signOutBtn');
+    if (so) so.addEventListener('click', function(){ Store.auth.logout().then(function(){ me = null; orderList = null; window.toast('Signed out'); paint('orders'); }); });
+    document.querySelectorAll('[data-return]').forEach(function(b){
+      b.addEventListener('click', function(){
+        var o = (orderList || []).filter(function(x){ return x.ref === b.getAttribute('data-return'); })[0];
+        if (o) returnModal(o);
+      });
+    });
     var f = document.getElementById('forget');
     if (f) f.addEventListener('click', function(){ Store.signOut(); window.toast('Saved details cleared', 'fa-eraser'); paint(current); });
     var lt = document.getElementById('leaveTrade');
@@ -196,7 +332,7 @@
 
     document.querySelectorAll('[data-reorder]').forEach(function(b){
       b.addEventListener('click', function(){
-        var o = Store.orderByRef(b.getAttribute('data-reorder'));
+        var o = (orderList || []).filter(function(x){ return x.ref === b.getAttribute('data-reorder'); })[0];
         if (!o) return;
         /* Re-order can silently fail on anything that has since sold out, so
            say which ones rather than quietly dropping them from the bag. */
@@ -221,8 +357,11 @@
     });
   });
   var want = new URLSearchParams(location.search).get('tab');
-  if (want) { var tb = document.querySelector('#tabs .tab[data-t="' + want + '"]'); if (tb) tb.click(); else paint('orders'); }
-  else paint('orders');
+  if (Store.remote) document.getElementById('modeNote').hidden = true;
+  Store.auth.me().then(function(r){ me = r.customer; }).catch(function(){}).then(function(){
+    if (want) { var tb = document.querySelector('#tabs .tab[data-t="' + want + '"]'); if (tb) tb.click(); else paint('orders'); }
+    else paint('orders');
+  });
 })();
 </script>
 </body>

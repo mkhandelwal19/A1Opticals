@@ -962,7 +962,14 @@ window.CATALOG = (function () {
     EDITABLE.forEach(function (k) { if (patch[k] !== undefined) m[sku][k] = patch[k]; });
     var ok = writeJson(OVR_KEY, m);
     applyOverrides();
+    changed('overrides', m);
     return ok;
+  }
+  /* Mirror an edit to the API when one is configured (store.js listens).
+     The server prices every order itself, so it has to hear about a price
+     or stock change the moment the admin saves it. */
+  function changed(key, value) {
+    try { window.dispatchEvent(new CustomEvent('a1:settings', { detail: { store: 'catalog', key: key, value: value } })); } catch (e) {}
   }
 
   /* Products added from the admin page. Stored whole; they look exactly like
@@ -976,11 +983,14 @@ window.CATALOG = (function () {
     if (!ok) return false;
     for (var i = PRODUCTS.length - 1; i >= 0; i--) if (PRODUCTS[i].sku === p.sku) PRODUCTS.splice(i, 1);
     PRODUCTS.push(p);
+    changed('products', list);
     return true;
   }
   function removeCustom(sku) {
-    writeJson(NEW_KEY, customProducts().filter(function (o) { return o.sku !== sku; }));
+    var list = customProducts().filter(function (o) { return o.sku !== sku; });
+    writeJson(NEW_KEY, list);
     for (var i = PRODUCTS.length - 1; i >= 0; i--) if (PRODUCTS[i].sku === sku && PRODUCTS[i].custom) PRODUCTS.splice(i, 1);
+    changed('products', list);
   }
   function clearEdits() {
     try { localStorage.removeItem(OVR_KEY); localStorage.removeItem(NEW_KEY); } catch (e) {}

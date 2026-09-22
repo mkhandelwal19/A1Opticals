@@ -53,6 +53,7 @@
 
 <script src="catalog.js"></script>
 <script src="site.js"></script>
+<script src="commerce.js"></script>
 <script src="store.js"></script>
 <script src="chrome.js"></script>
 <script>
@@ -76,8 +77,24 @@
     return list;
   }
 
+  function moneyBack(o){
+    var rets = o.returns || [], rs = o.refunds || [];
+    if (!rets.length && !rs.length) return '';
+    return '<div style="margin-top:16px;border-top:1px solid var(--line);padding-top:12px">' +
+      rets.map(function(r){ return '<div class="sum"><span>Return · ' + r.items.map(function(i){ return i.qty + ' × ' + esc(i.name); }).join(', ') + '</span><span class="pill ' + (r.status === 'refunded' ? 'ok' : r.status === 'rejected' ? 'grey' : 'warn') + '">' + esc(r.status) + '</span></div>'; }).join('') +
+      rs.map(function(r){ return '<div class="sum"><span>Refund ' + Store.rupees(r.amount) + '<small style="display:block;color:var(--muted)">' + (r.channel === 'manual' ? 'by bank transfer' : 'to the original payment method') + '</small></span><span class="pill ' + (r.status === 'processed' ? 'ok' : r.status === 'failed' ? 'grey' : 'warn') + '">' + esc(r.status) + '</span></div>'; }).join('') +
+    '</div>';
+  }
+  function afterDelivery(o){
+    if (o.status !== 'delivered') return '';
+    var policy = SITE.returnsPolicy();
+    var e = o.returnEligibility || {};
+    if (o.registered) return '<p style="margin-top:14px;font-size:14px;color:var(--ink-2)">' + (e.ok ? 'Returns are open until ' + Commerce.dateLong(e.until) + ' — <a href="account.html" style="color:var(--teal);font-weight:600">start one from your account</a>.' : e.reason === 'window-closed' ? 'The return window closed on ' + Commerce.dateLong(e.until) + '.' : '') + '</p>';
+    return '<p style="margin-top:14px;font-size:14px;color:var(--ink-2)">Guest order: to return anything, email <a href="mailto:' + esc(policy.email) + '" style="color:var(--teal);font-weight:600">' + esc(policy.email) + '</a> quoting ' + esc(o.ref) + (e.until ? ' before ' + Commerce.dateLong(e.until) : '') + '.</p>';
+  }
+
   function show(o){
-    var st = Store.statusOf(o);
+    var st = o.status;
     var list = stages(o);
     var idx = list.map(function(s){ return s.id; }).indexOf(st);
     if (st === 'cancelled') idx = -2;
@@ -87,15 +104,17 @@
         '<div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline">' +
           '<div><div class="mono">' + esc(o.ref) + '</div><h3 style="margin:6px 0 0">' + esc(o.items.map(function(i){ return i.name; }).join(', ')) + '</h3>' +
           '<div style="color:var(--muted);font-size:13.5px;margin-top:4px">Placed ' + when.toLocaleDateString('en-IN', fmt) + ' · ' + Store.rupees(o.total) + '</div></div>' +
-          '<span class="pill ' + (st === 'cancelled' ? 'grey' : st === 'delivered' ? 'ok' : 'ok') + '">' + esc(st) + '</span>' +
+          '<span class="pill ' + (st === 'cancelled' ? 'grey' : st === Commerce.PENDING ? 'warn' : 'ok') + '">' + esc(st) + '</span>' +
         '</div>' +
-        (st === 'cancelled' ? '<p style="margin-top:14px;color:var(--ink-2)">This order was cancelled. Any payment is refunded to the same method within 5 working days.</p>' :
+        (st === 'cancelled' ? '<p style="margin-top:14px;color:var(--ink-2)">This order was cancelled.' + (Commerce.isPaid((o.payment || {}).status) ? ' Your payment goes back to the same method; we email you when it is sent.' : '') + '</p>' :
+         st === Commerce.PENDING ? '<p style="margin-top:14px;color:var(--ink-2)">The payment for this order has not come through. Nothing has been charged — order again from the bag.</p>' :
         '<div class="timeline" style="margin-top:22px">' +
           list.map(function(s, i){
             var cls = i < idx ? 'done' : i === idx ? 'now' : '';
             return '<div class="tl ' + cls + '">' + esc(s.t) + '<small>' + esc(s.s) + '</small></div>';
           }).join('') +
         '</div>') +
+        afterDelivery(o) + moneyBack(o) +
         '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px"><a class="btn btn-soft btn-sm" href="order.html?ref=' + encodeURIComponent(o.ref) + '">View receipt</a><a class="btn btn-soft btn-sm" href="account.html">All orders</a></div>' +
       '</div>';
   }
@@ -105,16 +124,16 @@
     var ref = document.getElementById('tRef').value.trim().toUpperCase();
     var phone = document.getElementById('tPhone').value.replace(/\D/g, '');
     var err = document.getElementById('tErr');
-    var o = Store.orderByRef(ref);
-    if (!o) { err.hidden = false; err.textContent = 'No order with that reference in this browser. Orders in the preview are stored where they were placed.'; document.getElementById('result').innerHTML = ''; return; }
-    var op = String(o.customer.phone || '').replace(/\D/g, '');
-    if (phone && op && op.slice(-10) !== phone.slice(-10)) { err.hidden = false; err.textContent = 'That mobile number does not match the order.'; document.getElementById('result').innerHTML = ''; return; }
-    err.hidden = true;
-    show(o);
+    if (Store.remote && phone.length < 10) { err.hidden = false; err.textContent = 'The mobile number on the order, please — it is how we know it is yours.'; return; }
+    Store.fetchOrder(ref, phone || null).then(function(o){
+      if (!o) { err.hidden = false; err.textContent = Store.remote ? 'No order with that reference and mobile number.' : 'No order with that reference in this browser. Orders in the preview are stored where they were placed.'; document.getElementById('result').innerHTML = ''; return; }
+      err.hidden = true;
+      show(o);
+    }).catch(function(e){ err.hidden = false; err.textContent = e.message || 'Could not look that up just now'; });
   });
 
   var pre = new URLSearchParams(location.search).get('ref');
-  if (pre) { document.getElementById('tRef').value = pre; var o = Store.orderByRef(pre); if (o) show(o); }
+  if (pre) { document.getElementById('tRef').value = pre; Store.fetchOrder(pre).then(function(o){ if (o) show(o); }).catch(function(){}); }
 })();
 </script>
 </body>

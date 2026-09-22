@@ -160,6 +160,16 @@ window.SITE = (function () {
     display: {
       showBreakdown: true,   /* "frame ₹999 + lens ₹500" under card prices */
       tradeStrip: true       /* the "for opticians" panel on the home page */
+    },
+
+    /* Returns and refunds. The windows run from the delivery date; a guest
+       order (no account) is pointed at the email instead of the account page.
+       Both the storefront and the API read this — see commerce.js. */
+    returns: {
+      retailDays: 14,
+      tradeDays: 7,
+      email: 'refund@a1opticals.com',
+      excludeCats: []        /* category ids that never come back, e.g. ['contacts'] */
     }
   };
 
@@ -181,12 +191,22 @@ window.SITE = (function () {
   function set(key, value) {
     var o = read();
     o[key] = value;
-    return writeAll(o);
+    var ok = writeAll(o);
+    changed(key, value);
+    return ok;
   }
   function reset(key) {
     var o = read();
     delete o[key];
-    return writeAll(o);
+    var ok = writeAll(o);
+    changed(key, null);
+    return ok;
+  }
+  /* Tell anyone listening (store.js, when an API is configured) that a
+     setting changed, so the server prices with the same numbers the admin
+     just saved. Fire-and-forget; the local write above already happened. */
+  function changed(key, value) {
+    try { window.dispatchEvent(new CustomEvent('a1:settings', { detail: { store: 'site', key: key, value: value } })); } catch (e) {}
   }
   function resetAll() {
     try { localStorage.removeItem(KEY); } catch (e) {}
@@ -222,11 +242,16 @@ window.SITE = (function () {
     return s[0] || null;
   }
   function areas() { return get('delivery').areas || []; }
+  function returnsPolicy() {
+    var r = get('returns') || {};
+    var d = DEFAULTS.returns;
+    return { retailDays: r.retailDays || d.retailDays, tradeDays: r.tradeDays || d.tradeDays, email: r.email || d.email, excludeCats: r.excludeCats || [] };
+  }
 
   return {
     defaults: DEFAULTS,
     get: get, set: set, reset: reset, resetAll: resetAll, isEdited: isEdited,
     lensPackages: lensPackages, lens: lens, includedLens: includedLens, planoLens: planoLens,
-    stores: stores, store: store, areas: areas
+    stores: stores, store: store, areas: areas, returnsPolicy: returnsPolicy
   };
 })();

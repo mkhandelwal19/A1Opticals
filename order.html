@@ -27,6 +27,7 @@
 
 <script src="catalog.js"></script>
 <script src="site.js"></script>
+<script src="commerce.js"></script>
 <script src="store.js"></script>
 <script src="chrome.js"></script>
 <script>
@@ -34,135 +35,187 @@
   'use strict';
   var esc = window.escapeHtml;
   var ref = new URLSearchParams(location.search).get('ref');
-  var order = Store.orderByRef(ref);
   var wrap = document.getElementById('wrap');
+  var fmt = { day: 'numeric', month: 'long', year: 'numeric' };
+  var fmtT = { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' };
 
-  if (!order){
+  function notFound(){
     document.getElementById('steps').hidden = true;
     wrap.innerHTML =
       '<div class="empty"><h3>We cannot find that order</h3>' +
-      '<p>Orders in this preview live in your browser, so they will not be here on another device.</p>' +
-      '<p style="margin-top:18px"><a class="btn btn-primary" href="account.html">Your orders</a></p></div>';
-    return;
+      '<p>' + (Store.remote ? 'Sign in to see your orders, or track it with the reference and the mobile number on the order.' : 'Orders in this preview live in your browser, so they will not be here on another device.') + '</p>' +
+      '<p style="margin-top:18px"><a class="btn btn-primary" href="account.html">Your orders</a> <a class="btn btn-soft" href="track.html' + (ref ? '?ref=' + encodeURIComponent(ref) : '') + '">Track an order</a></p></div>';
   }
 
-  var trade = order.mode === 'trade';
-  var rxNeeded = order.items.some(function(i){ return i.needsRx; });
-  var stepsList = trade ? ['Order', 'Delivery', 'Payment', 'Confirmed'] : rxNeeded ? ['Bag', 'Prescription', 'Delivery', 'Payment', 'Confirmed'] : ['Bag', 'Delivery', 'Payment', 'Confirmed'];
-  document.getElementById('steps').innerHTML = stepsList.map(function(s, i){
-    var last = i === stepsList.length - 1;
-    return '<div class="step ' + (last ? 'on' : 'done') + '"><b>' + (last ? i + 1 : '<i class="fa-solid fa-check" style="font-size:10px"></i>') + '</b><span>' + s + '</span></div>';
-  }).join('');
-
-  var when = new Date(order.placedAt);
-  var fmt = { day: 'numeric', month: 'long', year: 'numeric' };
-  var dl = order.delivery || { method: 'van' };
-  var eta = new Date(when.getTime() + (dl.method === 'courier' ? 6 : rxNeeded ? 3 : 1) * 864e5);
-  var pay = order.payment || {};
-  var rx = order.rx;
-  var contact = SITE.get('contact');
-  var store = dl.store ? SITE.store(dl.store) : SITE.stores()[0];
-  var awaitingTransfer = /transfer/i.test(pay.status || '');
-  var payLater = /pay on/i.test(pay.status || '');
-
-  var rxLine = '';
-  if (rxNeeded && !trade) {
-    if (!rx || rx.method === 'later') rxLine = 'We still need your prescription — <a href="account.html" style="color:var(--teal);font-weight:600">add it from your account</a>, reply to the WhatsApp with a photo, or bring it to the store. Nothing is cut until we have it.';
-    else if (rx.method === 'call') rxLine = 'We will ring <strong>' + esc(order.customer.phone) + '</strong> within the hour for your power.';
-    else if (rx.method === 'photo') rxLine = 'We read the prescription photo and confirm the power on WhatsApp before cutting.';
-    else rxLine = 'Lenses are cut to <strong>' + esc(Store.rxSummary(rx)) + '</strong>. Change it free within 24 hours.';
+  /* One row per message actually queued or sent for this order, from the
+     outbox — not a list of what a page hopes was sent. */
+  function notifyRows(order){
+    var ns = order.notifications || [];
+    var icon = { email: 'fa-solid fa-envelope', whatsapp: 'fa-brands fa-whatsapp' };
+    var rows = ns.filter(function(n){ return !/^owner_/.test(n.template); }).map(function(n){
+      var muted = n.status !== 'sent';
+      return '<div class="notify-row' + (muted ? ' muted' : '') + '"><i class="' + (icon[n.channel] || 'fa-solid fa-bell') + '"></i><div><b>' + (n.channel === 'email' ? 'Email' : 'WhatsApp') + ' · ' + esc(n.to) + '</b>' +
+        '<span>' + esc(n.subject || n.body || n.template) + '</span></div><em>' + esc(n.status === 'sent' ? 'sent' : n.status === 'failed' ? 'failed' : 'queued') + '</em></div>';
+    });
+    var owner = ns.filter(function(n){ return /^owner_/.test(n.template); })[0];
+    if (owner) rows.push('<div class="notify-row"><i class="fa-solid fa-bell"></i><div><b>A1 Opticals · ' + esc(owner.template === 'owner_new_order' ? 'new order' : 'return request') + '</b><span>' + esc(owner.subject || '') + '</span></div><em>' + esc(owner.status) + '</em></div>');
+    var dl = order.delivery || {};
+    var shippedYet = ns.some(function(n){ return n.template === 'order_shipped' || n.template === 'order_ready' || n.template === 'order_delivered'; });
+    if (!shippedYet && order.status !== 'cancelled' && order.status !== 'delivered') {
+      rows.push('<div class="notify-row muted"><i class="fa-solid fa-truck"></i><div><b>' + (dl.method === 'collect' ? 'When it is ready' : 'At dispatch') + '</b>' +
+        '<span>' + (dl.method === 'collect' ? 'Email and WhatsApp saying it is ready at the counter' : 'Email and WhatsApp with the driver&#39;s name and expected time') + '</span></div><em>later</em></div>');
+    }
+    return rows.join('');
   }
 
-  wrap.innerHTML =
-    '<div class="conf">' +
-      '<div class="conf-mark"><i class="fa-solid fa-check"></i></div>' +
-      '<h1>Thank you, ' + esc(order.customer.name.split(' ')[0]) + '.</h1>' +
-      '<p style="margin-top:12px; color:var(--ink-2); font-size:17px">' +
-        (awaitingTransfer
-          ? 'Your order is placed and held for your bank transfer. It goes into work the moment the credit shows.'
-          : dl.method === 'collect'
-            ? 'Your order is confirmed for <strong>collection at ' + esc(store ? store.name + ', ' + store.city : 'the store') + '</strong>. We WhatsApp you when it is ready' + (payLater ? ' and you pay there' : '') + '.'
-            : 'Your order is confirmed' + (dl.method === 'courier' ? ' and goes by courier, ' + esc(dl.days || '4–7 working days') : (order.customer.slot ? ' for <strong>' + esc(order.customer.slot).toLowerCase() + '</strong>' : '')) + '.') +
-        ' The ' + (trade || order.customer.gstin ? 'GST invoice' : 'receipt') + ' has gone to <strong>' + esc(order.customer.email) + '</strong>.</p>' +
-      '<div class="ref">' + esc(order.ref) + '</div>' +
-      (rxLine ? '<div class="note" style="margin-top:18px"><i class="fa-solid fa-glasses"></i><div>' + rxLine + '</div></div>' : '') +
+  function returnsNote(order){
+    var policy = SITE.returnsPolicy();
+    var days = order.mode === 'trade' ? policy.tradeDays : policy.retailDays;
+    if (order.status === 'cancelled') return '';
+    if (order.registered) return '<div class="note" style="margin-top:18px"><i class="fa-solid fa-rotate-left"></i><div><strong>' + days + '-day returns from delivery.</strong> This order is in your account — sign in with <strong>' + esc(order.customer.email || 'your email') + '</strong> and choose “Return or refund” on it. <a href="account.html" style="color:var(--teal);font-weight:600">Your account</a></div></div>';
+    return '<div class="note" style="margin-top:18px"><i class="fa-solid fa-rotate-left"></i><div><strong>' + days + '-day returns from delivery.</strong> This was a guest order, so it is not in an online account. To return anything or ask for a refund, email <a href="mailto:' + esc(policy.email) + '?subject=' + encodeURIComponent('Return · order ' + order.ref) + '" style="color:var(--teal);font-weight:600">' + esc(policy.email) + '</a> quoting <strong>' + esc(order.ref) + '</strong>.</div></div>';
+  }
 
-      '<div class="notify">' +
-        '<div class="notify-h mono">Notifications sent</div>' +
-        '<div class="notify-row"><i class="fa-solid fa-envelope"></i><div><b>Email · ' + esc(order.customer.email) + '</b>' +
-          '<span>Order ' + esc(order.ref) + ' confirmed · ' + (trade || order.customer.gstin ? 'GST invoice attached' : 'receipt attached') + ' · ' + Store.rupees(order.total) + '</span></div><em>sent</em></div>' +
-        '<div class="notify-row"><i class="fa-brands fa-whatsapp"></i><div><b>WhatsApp · ' + esc(order.customer.phone) + '</b>' +
-          '<span>“A1 Opticals: order ' + esc(order.ref) + ' received, ' + order.items.reduce(function(n,i){ return n + i.qty; }, 0) + ' item' + (order.items.length === 1 && order.items[0].qty === 1 ? '' : 's') + '. ' + (rxNeeded && (!rx || rx.method === 'later') ? 'Reply with a photo of your prescription to get started.' : 'We will message again when it is ' + (dl.method === 'collect' ? 'ready to collect' : 'on its way') + '.') + '”</span></div><em>sent</em></div>' +
-        '<div class="notify-row"><i class="fa-solid fa-bell"></i><div><b>A1 Opticals · new order</b>' +
-          '<span>' + (trade ? 'Email and WhatsApp to the counter with the pick list and the delivery slot' : 'To the lab with the frame, lens package and power' + (dl.method === 'collect' ? ' · collection' : dl.method === 'courier' ? ' · courier' : ' · van, ' + esc(order.customer.slot || ''))) + '</span></div><em>sent</em></div>' +
-        '<div class="notify-row muted"><i class="fa-solid fa-truck"></i><div><b>' + (dl.method === 'collect' ? 'When it is ready' : 'At dispatch') + '</b>' +
-          '<span>' + (dl.method === 'collect' ? 'WhatsApp saying it is ready at the counter' : 'WhatsApp with the driver&#39;s name and expected time' + (trade ? ' · email with the e-way bill where applicable' : '')) + '</span></div><em>queued</em></div>' +
-      '</div>' +
+  function moneyBack(order){
+    var rs = order.refunds || [], rets = order.returns || [];
+    if (!rs.length && !rets.length) return '';
+    return '<div class="panel" style="margin-top:18px"><h3>Returns and refunds</h3>' +
+      rets.map(function(r){
+        return '<div class="sum"><span>Return · ' + r.items.map(function(i){ return i.qty + ' × ' + esc(i.name); }).join(', ') + '<small style="display:block;color:var(--muted)">' + new Date(r.createdAt).toLocaleDateString('en-IN', fmt) + (r.note ? ' · ' + esc(r.note) : '') + '</small></span><span class="pill ' + (r.status === 'refunded' ? 'ok' : r.status === 'rejected' || r.status === 'cancelled' ? 'grey' : 'warn') + '">' + esc(r.status) + '</span></div>';
+      }).join('') +
+      rs.map(function(r){
+        return '<div class="sum"><span>Refund ' + Store.rupees(r.amount) + (r.reason ? ' · ' + esc(r.reason) : '') + '<small style="display:block;color:var(--muted)">' + (r.channel === 'manual' ? 'By bank transfer' + (r.reference ? ' · ' + esc(r.reference) : '') : 'To the original payment method') + ' · ' + new Date(r.createdAt).toLocaleDateString('en-IN', fmt) + '</small></span><span class="pill ' + (r.status === 'processed' ? 'ok' : r.status === 'failed' ? 'grey' : 'warn') + '">' + esc(r.status) + '</span></div>';
+      }).join('') +
+    '</div>';
+  }
 
-      '<div class="note test" style="margin-top:22px">' +
-        '<i class="fa-solid fa-flask"></i>' +
-        '<div><strong>Preview — nothing was charged and no message was sent.</strong> ' +
-        'On the live platform these go out from the server: email through the transactional mail service, WhatsApp through the WhatsApp Business API, both triggered by the confirmed payment and never by this page.</div>' +
-      '</div>' +
+  function render(order){
+    var trade = order.mode === 'trade';
+    var rxNeeded = order.items.some(function(i){ return i.needsRx; });
+    var pending = order.status === Commerce.PENDING;
+    var stepsList = trade ? ['Order', 'Delivery', 'Payment', 'Confirmed'] : rxNeeded ? ['Bag', 'Prescription', 'Delivery', 'Payment', 'Confirmed'] : ['Bag', 'Delivery', 'Payment', 'Confirmed'];
+    document.getElementById('steps').innerHTML = stepsList.map(function(s, i){
+      var last = i === stepsList.length - 1;
+      return '<div class="step ' + (last ? 'on' : 'done') + '"><b>' + (last ? i + 1 : '<i class="fa-solid fa-check" style="font-size:10px"></i>') + '</b><span>' + s + '</span></div>';
+    }).join('');
 
-      '<div class="panel" style="margin-top:26px">' +
-        '<h3>' + (trade || order.customer.gstin ? 'Tax invoice' : 'Receipt') + '</h3>' +
-        '<div class="sum muted"><span>Placed</span><span>' + when.toLocaleDateString('en-IN', fmt) + '</span></div>' +
-        '<div class="sum muted"><span>' + (dl.method === 'collect' ? 'Ready to collect' : 'Expected delivery') + '</span><span>by ' + eta.toLocaleDateString('en-IN', fmt) + '</span></div>' +
-        '<div class="sum muted"><span>Paid by</span><span>' + esc(pay.method || '') + (pay.status ? ' · ' + esc(pay.status) : '') + '</span></div>' +
-        '<div class="sum muted"><span>Payment ref</span><span class="tnum">' + esc(pay.paymentId || '') + '</span></div>' +
+    var when = new Date(order.placedAt);
+    var dl = order.delivery || { method: 'van' };
+    var eta = new Date(when.getTime() + (dl.method === 'courier' ? 6 : rxNeeded ? 3 : 1) * 864e5);
+    var pay = order.payment || {};
+    var rx = order.rx;
+    var contact = SITE.get('contact');
+    var store = dl.store ? SITE.store(dl.store) : SITE.stores()[0];
+    var awaitingTransfer = pay.status === Commerce.PAY.AWAITING_TRANSFER;
+    var payLater = /pay on/.test(pay.status || '');
+    var cancelled = order.status === 'cancelled';
 
-        '<div class="table-wrap" style="margin:18px 0">' +
-          '<table><thead><tr>' +
-            '<th>Item</th><th>HSN</th><th>Qty</th><th class="num">Rate</th><th class="num">GST</th><th class="num">Amount</th>' +
-          '</tr></thead><tbody>' +
-          order.items.map(function(i){
-            var net = typeof i.net === 'number' ? i.net : i.gross;
-            var split = Store.taxSplit(net, i.gstRate);
-            return '<tr>' +
-              '<td style="white-space:normal">' + esc(i.name) + '<br><span style="color:var(--muted); font-size:12px">' + esc(i.variant) + (i.lens ? ' · ' + esc(i.lens) : '') + (i.free ? ' · ' + i.free + ' free' : '') + '</span></td>' +
-              '<td class="tnum">' + esc(i.hsn) + '</td>' +
-              '<td class="tnum">' + i.qty + '</td>' +
-              '<td class="num">' + Store.rupees(Math.round(split.base / i.qty)) + '</td>' +
-              '<td class="num">' + i.gstRate + '% · ' + Store.rupees(split.tax) + '</td>' +
-              '<td class="num">' + (i.discount ? '<s style="color:var(--muted)">' + Store.rupees(i.gross) + '</s> ' : '') + Store.rupees(net) + '</td>' +
-            '</tr>';
-          }).join('') +
-          '</tbody></table>' +
+    var rxLine = '';
+    if (rxNeeded && !trade && !cancelled) {
+      if (!rx || rx.method === 'later') rxLine = 'We still need your prescription — <a href="account.html" style="color:var(--teal);font-weight:600">add it from your account</a>, reply to the WhatsApp with a photo, or bring it to the store. Nothing is cut until we have it.';
+      else if (rx.method === 'call') rxLine = 'We will ring <strong>' + esc(order.customer.phone) + '</strong> within the hour for your power.';
+      else if (rx.method === 'photo') rxLine = 'We read the prescription photo and confirm the power on WhatsApp before cutting.';
+      else rxLine = 'Lenses are cut to <strong>' + esc(Store.rxSummary(rx)) + '</strong>. Change it free within 24 hours.';
+    }
+
+    var lead = pending ? 'Your order is saved but the payment has not come through yet. If you closed the payment window, go back to the bag and try again — nothing has been charged.'
+      : cancelled ? 'This order was cancelled.' + (Commerce.isPaid(pay.status) ? ' Your payment goes back to the same method; we email you when it is sent.' : '')
+      : awaitingTransfer ? 'Your order is placed and held for your bank transfer. It goes into work the moment the credit shows.'
+      : dl.method === 'collect'
+        ? 'Your order is confirmed for <strong>collection at ' + esc(store ? store.name + ', ' + store.city : 'the store') + '</strong>. We message you when it is ready' + (payLater ? ' and you pay there' : '') + '.'
+        : 'Your order is confirmed' + (dl.method === 'courier' ? ' and goes by courier, ' + esc(dl.days || '4–7 working days') : (order.customer.slot ? ' for <strong>' + esc(order.customer.slot).toLowerCase() + '</strong>' : '')) + '.';
+
+    wrap.innerHTML =
+      '<div class="conf">' +
+        '<div class="conf-mark"' + (pending || cancelled ? ' style="background:var(--grey);color:var(--muted)"' : '') + '><i class="fa-solid ' + (pending ? 'fa-hourglass-half' : cancelled ? 'fa-xmark' : 'fa-check') + '"></i></div>' +
+        '<h1>' + (pending ? 'Almost there, ' : cancelled ? 'Order cancelled, ' : 'Thank you, ') + esc((order.customer.name || '').split(' ')[0]) + '.</h1>' +
+        '<p style="margin-top:12px; color:var(--ink-2); font-size:17px">' + lead +
+          (!pending && !cancelled ? ' The ' + (trade || order.customer.gstin ? 'GST invoice' : 'receipt') + ' has gone to <strong>' + esc(order.customer.email || 'your email') + '</strong>.' : '') + '</p>' +
+        '<div class="ref">' + esc(order.ref) + '</div>' +
+        '<p style="margin-top:10px"><span class="pill ' + (order.status === 'delivered' ? 'ok' : cancelled ? 'grey' : pending ? 'warn' : 'ok') + '">' + esc(order.status) + '</span> <span class="pill grey">' + esc(pay.status || '') + '</span></p>' +
+        (rxLine ? '<div class="note" style="margin-top:18px"><i class="fa-solid fa-glasses"></i><div>' + rxLine + '</div></div>' : '') +
+        returnsNote(order) +
+        moneyBack(order) +
+
+        '<div class="notify">' +
+          '<div class="notify-h mono">Notifications</div>' +
+          (notifyRows(order) || '<div class="notify-row muted"><i class="fa-solid fa-envelope"></i><div><b>Nothing sent yet</b><span>Messages go out when the payment is confirmed</span></div><em>—</em></div>') +
         '</div>' +
 
-        (order.discount ? '<div class="sum"><span>' + esc((Store.bogoRule() || {}).label || 'Offer') + ' discount</span><span class="teal">−' + Store.rupees(order.discount) + '</span></div>' : '') +
-        '<div class="sum"><span>Taxable value</span><span>' + Store.rupees(order.base) + '</span></div>' +
-        Object.keys(order.byRate || {}).sort().map(function(r){
-          return '<div class="sum muted"><span>GST at ' + r + '%</span><span>' + Store.rupees(order.byRate[r]) + '</span></div>';
-        }).join('') +
-        '<div class="sum"><span>Delivery</span><span>' + (order.shipping === 0 ? 'Free' : Store.rupees(order.shipping)) + '</span></div>' +
-        '<div class="sum total"><span>Total</span><span>' + Store.rupees(order.total) + '</span></div>' +
-        '<p class="fine" style="text-align:left">A1 Opticals · ' + esc(contact.gstin) + ' · ' + esc(SITE.stores()[0] ? SITE.stores()[0].address : '') + '</p>' +
-      '</div>' +
+        (Store.remote ? '' :
+        '<div class="note test" style="margin-top:22px">' +
+          '<i class="fa-solid fa-flask"></i>' +
+          '<div><strong>Preview — nothing was charged and no message was sent.</strong> ' +
+          'The messages above are rendered from the real templates and kept in this browser. On the live platform they go out from the server — email through the transactional mail service, WhatsApp through the WhatsApp Business API — triggered by the confirmed payment and by the owner\'s status changes, never by this page.</div>' +
+        '</div>') +
 
-      '<div class="panel" style="margin-top:18px">' +
-        '<h3>' + (dl.method === 'collect' ? 'Collecting from' : 'Delivering to') + '</h3>' +
-        '<p style="color:var(--ink-2)">' +
-          (dl.method === 'collect' && store
-            ? '<strong>' + esc(store.address) + '</strong><br>' + esc(store.hours) + '<br>'
-            : '') +
-          (order.customer.shop ? '<strong>' + esc(order.customer.shop) + '</strong>' + (order.customer.gstin ? ' · GSTIN ' + esc(order.customer.gstin) : '') + '<br>' : '') +
-          esc(order.customer.name) + '<br>' +
-          (dl.method !== 'collect' ? esc(order.customer.address).replace(/\n/g, '<br>') + '<br>' + esc(order.customer.city) + ' ' + esc(order.customer.pin) + '<br>' : '') +
-          esc(order.customer.phone) +
-          (order.customer.slot ? '<br><span class="mono" style="text-transform:none; letter-spacing:.04em">' + esc(order.customer.slot) + '</span>' : '') +
-          (order.customer.po ? '<br><span class="mono" style="text-transform:none; letter-spacing:.04em">' + (trade ? 'Your PO: ' : 'Gift note: ') + esc(order.customer.po) + '</span>' : '') +
-          (order.customer.notes ? '<br><span class="mono" style="text-transform:none; letter-spacing:.04em">Notes: ' + esc(order.customer.notes) + '</span>' : '') +
-        '</p>' +
-      '</div>' +
+        '<div class="panel" style="margin-top:26px">' +
+          '<h3>' + (trade || order.customer.gstin ? 'Tax invoice' : 'Receipt') + '</h3>' +
+          '<div class="sum muted"><span>Placed</span><span>' + when.toLocaleDateString('en-IN', fmt) + '</span></div>' +
+          (!pending && !cancelled ? '<div class="sum muted"><span>' + (dl.method === 'collect' ? 'Ready to collect' : 'Expected delivery') + '</span><span>by ' + eta.toLocaleDateString('en-IN', fmt) + '</span></div>' : '') +
+          '<div class="sum muted"><span>Paid by</span><span>' + esc(pay.method || '') + (pay.status ? ' · ' + esc(pay.status) : '') + '</span></div>' +
+          (pay.paymentId ? '<div class="sum muted"><span>Payment ref</span><span class="tnum">' + esc(pay.paymentId) + '</span></div>' : '') +
 
-      '<div style="display:flex; gap:12px; margin-top:24px; flex-wrap:wrap">' +
-        '<a class="btn btn-primary" href="track.html?ref=' + encodeURIComponent(order.ref) + '">Track this order</a>' +
-        '<a class="btn btn-soft" href="account.html">All your orders</a>' +
-        '<a class="btn btn-soft" href="shop.html">Keep shopping</a>' +
-      '</div>' +
-    '</div>';
+          '<div class="table-wrap" style="margin:18px 0">' +
+            '<table><thead><tr>' +
+              '<th>Item</th><th>HSN</th><th>Qty</th><th class="num">Rate</th><th class="num">GST</th><th class="num">Amount</th>' +
+            '</tr></thead><tbody>' +
+            order.items.map(function(i){
+              var net = typeof i.net === 'number' ? i.net : i.gross;
+              var split = Store.taxSplit(net, i.gstRate);
+              return '<tr>' +
+                '<td style="white-space:normal">' + esc(i.name) + '<br><span style="color:var(--muted); font-size:12px">' + esc(i.variant) + (i.lens ? ' · ' + esc(i.lens) : '') + (i.free ? ' · ' + i.free + ' free' : '') + '</span></td>' +
+                '<td class="tnum">' + esc(i.hsn) + '</td>' +
+                '<td class="tnum">' + i.qty + '</td>' +
+                '<td class="num">' + Store.rupees(Math.round(split.base / i.qty)) + '</td>' +
+                '<td class="num">' + i.gstRate + '% · ' + Store.rupees(split.tax) + '</td>' +
+                '<td class="num">' + (i.discount ? '<s style="color:var(--muted)">' + Store.rupees(i.gross) + '</s> ' : '') + Store.rupees(net) + '</td>' +
+              '</tr>';
+            }).join('') +
+            '</tbody></table>' +
+          '</div>' +
+
+          (order.discount ? '<div class="sum"><span>' + esc((Store.bogoRule() || {}).label || 'Offer') + ' discount</span><span class="teal">−' + Store.rupees(order.discount) + '</span></div>' : '') +
+          '<div class="sum"><span>Taxable value</span><span>' + Store.rupees(order.base) + '</span></div>' +
+          Object.keys(order.byRate || {}).sort().map(function(r){
+            return '<div class="sum muted"><span>GST at ' + r + '%</span><span>' + Store.rupees(order.byRate[r]) + '</span></div>';
+          }).join('') +
+          '<div class="sum"><span>Delivery</span><span>' + (order.shipping === 0 ? 'Free' : Store.rupees(order.shipping)) + '</span></div>' +
+          '<div class="sum total"><span>Total</span><span>' + Store.rupees(order.total) + '</span></div>' +
+          '<p class="fine" style="text-align:left">A1 Opticals · ' + esc(contact.gstin) + ' · ' + esc(SITE.stores()[0] ? SITE.stores()[0].address : '') + '</p>' +
+        '</div>' +
+
+        '<div class="panel" style="margin-top:18px">' +
+          '<h3>' + (dl.method === 'collect' ? 'Collecting from' : 'Delivering to') + '</h3>' +
+          '<p style="color:var(--ink-2)">' +
+            (dl.method === 'collect' && store
+              ? '<strong>' + esc(store.address) + '</strong><br>' + esc(store.hours) + '<br>'
+              : '') +
+            (order.customer.shop ? '<strong>' + esc(order.customer.shop) + '</strong>' + (order.customer.gstin ? ' · GSTIN ' + esc(order.customer.gstin) : '') + '<br>' : '') +
+            esc(order.customer.name) + '<br>' +
+            (dl.method !== 'collect' ? esc(order.customer.address || '').replace(/\n/g, '<br>') + '<br>' + esc(order.customer.city || '') + ' ' + esc(order.customer.pin || '') + '<br>' : '') +
+            esc(order.customer.phone || '') +
+            (order.customer.slot ? '<br><span class="mono" style="text-transform:none; letter-spacing:.04em">' + esc(order.customer.slot) + '</span>' : '') +
+            (order.customer.po ? '<br><span class="mono" style="text-transform:none; letter-spacing:.04em">' + (trade ? 'Your PO: ' : 'Gift note: ') + esc(order.customer.po) + '</span>' : '') +
+            (order.customer.notes ? '<br><span class="mono" style="text-transform:none; letter-spacing:.04em">Notes: ' + esc(order.customer.notes) + '</span>' : '') +
+          '</p>' +
+        '</div>' +
+
+        (order.events && order.events.length > 1 ? '<div class="panel" style="margin-top:18px"><h3>History</h3>' +
+          order.events.slice().reverse().map(function(e){ return '<div class="sum muted"><span>' + esc(e.to) + (e.note ? ' <small style="color:var(--muted)">· ' + esc(e.note) + '</small>' : '') + '</span><span class="tnum">' + new Date(e.at).toLocaleString('en-IN', fmtT) + '</span></div>'; }).join('') +
+        '</div>' : '') +
+
+        '<div style="display:flex; gap:12px; margin-top:24px; flex-wrap:wrap">' +
+          '<a class="btn btn-primary" href="track.html?ref=' + encodeURIComponent(order.ref) + '">Track this order</a>' +
+          '<a class="btn btn-soft" href="account.html">All your orders</a>' +
+          '<a class="btn btn-soft" href="shop.html">Keep shopping</a>' +
+        '</div>' +
+      '</div>';
+  }
+
+  if (!ref) { notFound(); return; }
+  wrap.innerHTML = '<div class="empty"><p>Loading your order…</p></div>';
+  Store.fetchOrder(ref).then(function(order){ if (!order) notFound(); else render(order); }).catch(function(){ notFound(); });
 })();
 </script>
 </body>

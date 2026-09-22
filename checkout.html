@@ -27,6 +27,7 @@
 
 <script src="catalog.js"></script>
 <script src="site.js"></script>
+<script src="commerce.js"></script>
 <script src="store.js"></script>
 <script src="chrome.js"></script>
 <script>
@@ -62,9 +63,15 @@
     shop: saved.shop || '', gstin: saved.gstin || '', wantGst: !!saved.gstin && !trade,
     name: saved.name || '', phone: saved.phone || '', email: saved.email || '',
     address: saved.address || '', city: saved.city || '', pin: saved.pin || '',
-    slot: '', collect: false, store: (SITE.stores()[0] || {}).id, po: '', notes: '', labNotes: ''
+    slot: '', collect: false, store: (SITE.stores()[0] || {}).id, po: '', notes: '', labNotes: '',
+    register: saved.register !== false
   };
   var method = 'UPI';
+  /* Signed in already (live store): the order is theirs, no choice to make.
+     Otherwise the delivery step asks whether to keep an account — that is
+     what decides if returns can be started online or by email. */
+  var signedIn = null;
+  Store.auth.me().then(function(me){ signedIn = me.customer; if (signedIn && Store.remote) Store.fetchOrders().catch(function(){}); if (signedIn && step === 'delivery') paint(); }).catch(function(){});
 
   function area(){ return Store.serviceArea(d.pin); }
   function deliveryMethod(){
@@ -219,7 +226,16 @@
     });
   }
 
-  /* ── Step: delivery ── */
+  /* Keep an account, or check out as a guest. With an account the order
+     sits behind an email sign-in and a return can be started from it; a
+     guest order can only be returned by writing to the refunds address. */
+  function accountChoice(){
+    var policy = SITE.returnsPolicy();
+    if (signedIn) return '<div class="note ok" style="margin-top:14px"><i class="fa-solid fa-user-check"></i><div>Signed in as <strong>' + esc(signedIn.email) + '</strong>. This order goes to your account, where you can track it and start a return.</div></div>';
+    return '<label class="check" style="margin-top:14px"><input type="checkbox" id="cRegister"' + (d.register ? ' checked' : '') + '><span>Keep an account with this email <span class="hint" style="display:block">Sign in with a code we email you — no password. Track orders and start a ' + policy.retailDays + '-day return online. Unticked, this is a guest order and returns go by email to ' + esc(policy.email) + '.</span></span></label>';
+  }
+
+    /* ── Step: delivery ── */
   function deliveryStep(){
     var slots = SITE.get('delivery').slots;
     var stores = SITE.stores();
@@ -238,6 +254,7 @@
             field('cPhone', 'Mobile — WhatsApp updates go here', 'name="phone" type="tel" autocomplete="tel" required', d.phone) +
           '</div>' +
           field('cEmail', 'Email — the invoice goes here', 'name="email" type="email" autocomplete="email" required', d.email) +
+          accountChoice() +
         '</div>'
         :
         '<div class="panel" style="margin-bottom:18px">' +
@@ -252,6 +269,7 @@
             field('cShop', 'Business name', 'name="shop" autocomplete="organization"', d.shop) +
             field('cGstin', 'GSTIN', 'name="gstin" autocomplete="off" placeholder="04AAAAA0000A1Z5" style="text-transform:uppercase"', d.gstin) +
           '</div>' +
+          accountChoice() +
         '</div>') +
 
         '<div class="panel">' +
@@ -319,6 +337,8 @@
   function wireDelivery(){
     var wg = document.getElementById('wantGst');
     if (wg) wg.addEventListener('change', function(){ d.wantGst = wg.checked; document.getElementById('gstRow').hidden = !wg.checked; });
+    var cr = document.getElementById('cRegister');
+    if (cr) cr.addEventListener('change', function(){ d.register = cr.checked; });
     var b = document.getElementById('dBack');
     if (b) b.addEventListener('click', function(){ go('rx'); });
 
@@ -406,7 +426,7 @@
       d.shop = (trade || d.wantGst) ? g('cShop') : ''; d.gstin = (trade || d.wantGst) ? g('cGstin').toUpperCase() : '';
       d.address = g('cAddr'); d.city = g('cCity'); d.pin = g('cPin'); d.po = g('cPo'); d.notes = g('cNotes');
       var st = document.getElementById('cStore'); if (st) d.store = st.value;
-      Store.setUser({ shop: d.shop, gstin: d.gstin, name: d.name, phone: d.phone, email: d.email, address: d.address, city: d.city, pin: d.pin, trade: trade || (saved.trade || false) });
+      Store.setUser({ shop: d.shop, gstin: d.gstin, name: d.name, phone: d.phone, email: d.email, address: d.address, city: d.city, pin: d.pin, trade: trade || (saved.trade || false), register: d.register, registered: !!(saved.registered) });
       go('payment');
     });
   }
@@ -415,7 +435,9 @@
   function paymentStep(){
     var a = area();
     var cod = !trade && !d.collect && a && a.van;
-    var credit = trade && Store.orders().filter(function(o){ return o.mode === 'trade' && Store.statusOf(o) !== 'cancelled'; }).length >= 3;
+    /* Credit unlocks after three paid trade orders. The server decides for
+       real (it refuses the method otherwise); this only shows the option. */
+    var credit = trade && Store.orders().filter(function(o){ var h = Store.remote ? o : Store.hydrate(o); return h.mode === 'trade' && h.status !== 'cancelled' && Commerce.isPaid((h.payment || {}).status); }).length >= 3;
     return '<div>' +
       '<h1 style="font-size:24px;margin-bottom:22px">Payment</h1>' +
       '<div class="panel">' +
@@ -427,7 +449,7 @@
           '<label class="pm"><input type="radio" name="pm" value="Bank transfer"><i class="fa-solid fa-building-columns"></i><div><b>Bank transfer</b><span>NEFT / RTGS / IMPS · dispatched when the credit shows</span></div></label>' +
           (trade ? '<label class="pm' + (credit ? '' : ' off') + '"><input type="radio" name="pm" value="Credit account"' + (credit ? '' : ' disabled') + '><i class="fa-solid fa-file-invoice-dollar"></i><div><b>Credit account · net-30</b><span>' + (credit ? 'Invoice due in 30 days' : 'Unlocks after your third paid order') + '</span></div></label>' : '') +
         '</div>' +
-        '<p class="fine" style="text-align:left;margin-top:16px">Preview: no money moves. On the live platform UPI and cards open the payment gateway, and the payment is confirmed server-side, never by this page.</p>' +
+        '<p class="fine" style="text-align:left;margin-top:16px">' + (Store.remote ? 'UPI and cards open the payment gateway. The payment is confirmed by our server from the gateway’s signature, never by this page, and the amount is what our server priced — not what this page shows.' : 'Preview: no money moves. On the live platform UPI and cards open the payment gateway, and the payment is confirmed server-side, never by this page.') + '</p>' +
       '</div>' +
       '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:22px">' +
         '<button type="button" class="btn btn-primary btn-lg" id="payBtn"><i class="fa-solid fa-lock"></i> <span id="payLabel"></span></button>' +
@@ -470,19 +492,20 @@
       var rx = tt.rxNeeded ? (Store.getRx() || { method: 'later', od: {}, os: {}, pd: {} }) : null;
       if (rx && d.labNotes) rx.notes = d.labNotes;
 
-      Store.pay(details).then(function(payment){
-        payment.method = payment.simulated ? method + ' (preview)' : payment.method;
-        if (method === 'Bank transfer') payment.status = 'awaiting transfer';
-        if (method === 'Cash on delivery' || method === 'Pay in store') payment.status = 'pay on ' + (method === 'Pay in store' ? 'collection' : 'delivery');
-        if (method === 'Credit account') payment.status = 'on account';
-        var order = Store.placeOrder(details, payment, { delivery: delivery, rx: rx });
-        if (!order) throw new Error('order could not be created');
+      Store.checkout({ details: details, method: method, delivery: delivery, rx: rx, register: !signedIn && d.register }).then(function(order){
         location.href = 'order.html?ref=' + encodeURIComponent(order.ref);
       }).catch(function(err){
         btn.disabled = false;
         btn.innerHTML = '<i class="fa-solid fa-lock"></i> <span id="payLabel"></span>';
         payLabel();
-        window.toast(err && err.message === 'cancelled' ? 'Payment cancelled' : 'That payment did not go through', 'fa-circle-xmark');
+        var msg = err && err.message === 'cancelled' ? 'Payment cancelled — nothing was charged'
+          : err && err.message === 'failed' ? 'That payment did not go through — nothing was charged. Try again or pick another method.'
+          : err && err.code === 'out-of-stock' ? (err.message || 'Something in your bag just sold out') + ' — update your bag and try again'
+          : err && err.code === 'in-progress' ? 'Your order is still being created — give it a moment, then try again'
+          : err && err.code === 'gateway-down' ? err.message
+          : err && err.status === 422 ? (err.message || 'Please check the details and try again')
+          : 'That payment did not go through';
+        window.toast(msg, 'fa-circle-xmark');
       });
     });
   }

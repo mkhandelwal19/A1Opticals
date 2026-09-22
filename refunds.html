@@ -56,10 +56,18 @@ anything made to a prescription supplied per line cannot be returned.</p>
 
 <h2>How a return works</h2>
 <ol>
-  <li>Raise it from your account, or WhatsApp the order reference.</li>
-  <li>Bring it to the store, we collect it with the van, or we send a courier label.</li>
-  <li>Refund within five working days of receipt; trade credit shows on your next
-      invoice.</li>
+  <li><strong>Ordered with an account?</strong> Sign in with the email you ordered with
+      (we send a six-digit code — no password), open the order and choose
+      <em>Return or refund</em>. Tick what is coming back; the refund amount is shown
+      before you confirm.</li>
+  <li><strong>Ordered as a guest?</strong> Guest orders are not in an online account.
+      Email <a href="mailto:refund@a1opticals.com" id="refundMail">refund@a1opticals.com</a>
+      with the order reference from your receipt and what you want to return. The
+      delivery email you received says the same.</li>
+  <li>We confirm within one working day: bring it to the store, we collect it with the
+      van, or we send a courier label.</li>
+  <li>Refund to the original payment method within five working days of receipt — you
+      get an email when it is sent. Trade credit shows on your next invoice.</li>
 </ol>
 
 <h2>Faulty or wrong items</h2>
@@ -69,7 +77,9 @@ at the same time. No seven-day limit applies to a genuine fault.</p>
 <div id="chrome-foot"></div>
 <script src="catalog.js"></script>
 <script src="site.js"></script>
+<script src="commerce.js"></script>
 <script src="store.js"></script>
 <script src="chrome.js"></script>
+<script>(function(){ var p = SITE.returnsPolicy(); var a = document.getElementById('refundMail'); if (a) { a.textContent = p.email; a.href = 'mailto:' + p.email; } })();</script>
 </body>
 </html>

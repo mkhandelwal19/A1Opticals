@@ -1,0 +1,11 @@
+{
+  "name": "a1opticals",
+  "version": "0.2.0",
+  "private": true,
+  "description": "A1 Opticals — storefront (static) and commerce API (Node, zero dependencies)",
+  "engines": { "node": ">=22.5" },
+  "scripts": {
+    "start": "node api/server.js",
+    "test": "node --test api/test.js"
+  }
+}

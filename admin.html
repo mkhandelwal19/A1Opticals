@@ -54,7 +54,7 @@
       </div>
     </div>
 
-    <div class="note" style="margin:16px 0 22px">
+    <div class="note" style="margin:16px 0 22px" id="dashNote">
       <i class="fa-solid fa-lock"></i>
       <div><strong>Edits made here are live on every page of the preview</strong> — they are saved in this browser. On the live platform they are rows in the database, and every change is logged with who made it and when.</div>
     </div>
@@ -69,6 +69,8 @@
       <button class="tab" role="tab" aria-selected="false" data-t="lenses">Lenses &amp; offers</button>
       <button class="tab" role="tab" aria-selected="false" data-t="content">Site content</button>
       <button class="tab" role="tab" aria-selected="false" data-t="stores">Stores &amp; delivery</button>
+      <button class="tab" role="tab" aria-selected="false" data-t="returns">Returns &amp; refunds</button>
+      <button class="tab" role="tab" aria-selected="false" data-t="outbox">Notifications</button>
       <button class="tab" role="tab" aria-selected="false" data-t="bookings">Bookings</button>
       <button class="tab" role="tab" aria-selected="false" data-t="lowest">Needs attention</button>
     </div>
@@ -81,6 +83,7 @@
 
 <script src="catalog.js"></script>
 <script src="site.js"></script>
+<script src="commerce.js"></script>
 <script src="store.js"></script>
 <script src="chrome.js"></script>
 <script>
@@ -90,55 +93,180 @@
   var rs = function(paise){ return paise == null ? '' : (paise / 100); };
   var toPaise = function(v){ var n = parseFloat(String(v).replace(/[₹,\s]/g, '')); return isNaN(n) ? NaN : Math.round(n * 100); };
 
+  var ORDERS = [];   /* the last list fetched, hydrated with status, returns, refunds */
+  function orderByRef(ref){ return ORDERS.filter(function(o){ return o.ref === ref; })[0] || null; }
+  function loadOrders(){
+    return Store.fetchOrders({ scope: 'admin', pending: true }).then(function(list){ ORDERS = list; return list; });
+  }
   function stats(){
-    var orders = Store.orders();
-    var revenue = orders.reduce(function(n,o){ return n + o.total; }, 0);
-    var rxWaiting = orders.filter(function(o){ return Store.statusOf(o) === 'awaiting prescription' || (o.items.some(function(i){ return i.needsRx; }) && (!o.rx || o.rx.method === 'later') && Store.statusOf(o) === 'confirmed'); }).length;
+    var orders = ORDERS.filter(function(o){ return o.status !== Commerce.PENDING; });
+    var revenue = orders.filter(function(o){ return o.status !== 'cancelled'; }).reduce(function(n,o){ return n + o.total - Commerce.refundedSoFar(o); }, 0);
+    var rxWaiting = orders.filter(function(o){ return o.status === 'awaiting prescription' || (o.items.some(function(i){ return i.needsRx; }) && (!o.rx || o.rx.method === 'later') && o.status === 'confirmed'); }).length;
     var lowStock = CATALOG.products.filter(function(p){ return p.stock <= 3; }).length;
     var bookings = Store.bookings().filter(function(b){ return b.status === 'booked'; }).length + Store.reservations().filter(function(r){ return r.status === 'requested'; }).length;
-    var cards = [['Orders', orders.length], ['Revenue', Store.rupees(revenue)], ['Awaiting prescription', rxWaiting], ['Bookings & reservations', bookings], ['Low stock', lowStock]];
+    var openReturns = ORDERS.reduce(function(n,o){ return n + (o.returns || []).filter(Commerce.returnOpen).length; }, 0);
+    var cards = [['Orders', orders.length], ['Net revenue', Store.rupees(revenue)], ['Awaiting prescription', rxWaiting], ['Open returns', openReturns], ['Bookings & reservations', bookings], ['Low stock', lowStock]];
     document.getElementById('stats').innerHTML = cards.map(function(c){
       return '<div class="stat"><div class="mono">' + c[0] + '</div><b>' + c[1] + '</b></div>';
     }).join('');
-    document.getElementById('stats').style.gridTemplateColumns = 'repeat(5,1fr)';
+    document.getElementById('stats').style.gridTemplateColumns = 'repeat(6,1fr)';
   }
 
   /* ── Orders ─────────────────────────────────────────────────────────────── */
+  function payCell(o){
+    var p = o.payment || {};
+    var html = esc((p.method || '').replace(' (preview)', '')) + '<br><span class="pill ' + (Commerce.isPaid(p.status) ? (p.status === 'paid' ? 'ok' : 'warn') : 'grey') + '">' + esc(p.status || '') + '</span>';
+    (o.refunds || []).forEach(function(r){ html += '<br><span style="font-size:12px;color:var(--muted)">−' + Store.rupees(r.amount) + ' ' + esc(r.status) + (r.channel === 'manual' ? ' (manual)' : '') + '</span>'; });
+    return html;
+  }
+  function statusSelect(o){
+    var st = o.status;
+    if (st === Commerce.PENDING) return '<span class="pill warn">' + esc(st) + '</span><br><button type="button" class="linkish" data-cancel="' + esc(o.ref) + '" style="font-size:12px">Cancel &amp; release stock</button>';
+    var opts = [st].concat(Commerce.nextStatuses(st));
+    if (opts.length === 1) return '<span class="pill ' + (st === 'delivered' ? 'ok' : 'grey') + '">' + esc(st) + '</span>';
+    return '<select class="sort mini" data-ref="' + esc(o.ref) + '" data-version="' + o.version + '">' +
+      opts.map(function(x){ return '<option' + (x === st ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select>';
+  }
   function ordersTable(list){
-    var orders = list || Store.orders();
-    if (!orders.length){
+    var orders = list || ORDERS.filter(function(o){ return o.status !== Commerce.PENDING; });
+    var pending = list ? [] : ORDERS.filter(function(o){ return o.status === Commerce.PENDING; });
+    if (!orders.length && !pending.length){
       return '<div class="empty"><h3>No orders yet</h3>' +
              '<p>Place one through the shop and it will show up here immediately.</p>' +
              '<p style="margin-top:16px"><a class="btn btn-primary btn-sm" href="shop.html">Go to the shop</a></p></div>';
     }
-    return '<div class="table-wrap"><table><thead><tr>' +
+    function row(o){
+      var st = o.status;
+      var needs = o.items.some(function(i){ return i.needsRx; });
+      var rxCell = !needs ? '<span style="color:var(--muted)">—</span>'
+        : !o.rx || o.rx.method === 'later' ? '<span class="pill warn">missing</span>'
+        : o.rx.method === 'call' ? '<span class="pill warn">call</span>'
+        : o.rx.method === 'photo' ? '<span class="pill ok">photo</span>'
+        : '<span class="pill ok" title="' + esc(Store.rxSummary(o.rx)) + '">' + esc(Store.rxSummary(o.rx)).slice(0, 22) + '…</span>';
+      var d = o.delivery || {};
+      var open = (o.returns || []).filter(Commerce.returnOpen).length;
+      return '<tr' + (st === 'cancelled' ? ' style="opacity:.7"' : '') + '>' +
+        '<td class="tnum"><b>' + esc(o.ref) + '</b>' + (o.mode === 'trade' ? '<br><span class="pill grey">trade</span>' : '') + (o.registered ? '' : '<br><span class="pill grey" title="No account — returns by email">guest</span>') + '</td>' +
+        '<td>' + new Date(o.placedAt).toLocaleDateString('en-IN', { day:'numeric', month:'short' }) + '</td>' +
+        '<td>' + esc(o.customer.shop || o.customer.name) + '<br><span style="color:var(--muted); font-size:12px">' + esc(o.customer.phone || '') + (o.customer.city ? ' · ' + esc(o.customer.city) : '') + '</span></td>' +
+        '<td style="white-space:normal;max-width:240px;font-size:13px">' + o.items.map(function(i){ return i.qty + ' × ' + esc(i.name) + (i.lens ? ' <span style="color:var(--muted)">(' + esc(i.lens) + ')</span>' : ''); }).join('<br>') + (open ? '<br><span class="pill warn">' + open + ' return open</span>' : '') + '</td>' +
+        '<td>' + rxCell + '</td>' +
+        '<td style="font-size:13px">' + esc(d.method === 'collect' ? 'Collect' : d.method === 'courier' ? 'Courier' : 'Van') + (o.customer.slot ? '<br><span style="color:var(--muted);font-size:12px">' + esc(o.customer.slot) + '</span>' : '') + '</td>' +
+        '<td class="num">' + Store.rupees(o.total) + (o.discount ? '<br><span style="color:var(--muted);font-size:12px">−' + Store.rupees(o.discount) + ' offer</span>' : '') + '</td>' +
+        '<td style="font-size:13px">' + payCell(o) + '</td>' +
+        '<td>' + statusSelect(o) + '</td>' +
+        '<td style="white-space:nowrap"><a class="btn btn-soft btn-sm" href="order.html?ref=' + encodeURIComponent(o.ref) + '" target="_blank" rel="noopener">Open</a>' +
+          (o.payment && o.payment.status === Commerce.PAY.AWAITING_TRANSFER ? ' <button type="button" class="btn btn-soft btn-sm" data-paid="' + esc(o.ref) + '">Mark paid</button>' : '') +
+          (o.refundable > 0 ? ' <button type="button" class="btn btn-soft btn-sm" data-refund="' + esc(o.ref) + '"><i class="fa-solid fa-rotate-left"></i> Refund</button>' : '') +
+        '</td>' +
+      '</tr>';
+    }
+    var head = '<div class="table-wrap"><table><thead><tr>' +
       '<th>Ref</th><th>Placed</th><th>Customer</th><th>Items</th><th>Rx</th><th>Delivery</th><th class="num">Total</th><th>Paid</th><th>Status</th><th></th>' +
-      '</tr></thead><tbody>' +
-      orders.map(function(o){
-        var st = Store.statusOf(o);
-        var needs = o.items.some(function(i){ return i.needsRx; });
-        var rxCell = !needs ? '<span style="color:var(--muted)">—</span>'
-          : !o.rx || o.rx.method === 'later' ? '<span class="pill warn">missing</span>'
-          : o.rx.method === 'call' ? '<span class="pill warn">call</span>'
-          : o.rx.method === 'photo' ? '<span class="pill ok">photo</span>'
-          : '<span class="pill ok" title="' + esc(Store.rxSummary(o.rx)) + '">' + esc(Store.rxSummary(o.rx)).slice(0, 22) + '…</span>';
-        var d = o.delivery || {};
-        return '<tr>' +
-          '<td class="tnum"><b>' + esc(o.ref) + '</b>' + (o.mode === 'trade' ? '<br><span class="pill grey">trade</span>' : '') + '</td>' +
-          '<td>' + new Date(o.placedAt).toLocaleDateString('en-IN', { day:'numeric', month:'short' }) + '</td>' +
-          '<td>' + esc(o.customer.shop || o.customer.name) + '<br><span style="color:var(--muted); font-size:12px">' + esc(o.customer.phone || '') + (o.customer.city ? ' · ' + esc(o.customer.city) : '') + '</span></td>' +
-          '<td style="white-space:normal;max-width:260px;font-size:13px">' + o.items.map(function(i){ return i.qty + ' × ' + esc(i.name) + (i.lens ? ' <span style="color:var(--muted)">(' + esc(i.lens) + ')</span>' : ''); }).join('<br>') + '</td>' +
-          '<td>' + rxCell + '</td>' +
-          '<td style="font-size:13px">' + esc(d.method === 'collect' ? 'Collect' : d.method === 'courier' ? 'Courier' : 'Van') + (o.customer.slot ? '<br><span style="color:var(--muted);font-size:12px">' + esc(o.customer.slot) + '</span>' : '') + '</td>' +
-          '<td class="num">' + Store.rupees(o.total) + (o.discount ? '<br><span style="color:var(--muted);font-size:12px">−' + Store.rupees(o.discount) + ' offer</span>' : '') + '</td>' +
-          '<td style="font-size:13px">' + esc((o.payment && o.payment.method || '').replace(' (preview)', '')) + (o.payment && o.payment.status ? '<br><span style="color:var(--muted);font-size:12px">' + esc(o.payment.status) + '</span>' : '') + '</td>' +
-          '<td><select class="sort mini" data-ref="' + esc(o.ref) + '">' +
-            Store.STATUS.map(function(s){ return '<option' + (s === st ? ' selected' : '') + '>' + s + '</option>'; }).join('') +
-          '</select></td>' +
-          '<td><a class="btn btn-soft btn-sm" href="order.html?ref=' + encodeURIComponent(o.ref) + '" target="_blank" rel="noopener">Open</a></td>' +
-        '</tr>';
-      }).join('') +
-      '</tbody></table></div>';
+      '</tr></thead><tbody>';
+    var html = head + orders.map(row).join('') + '</tbody></table></div>';
+    if (pending.length) html += '<h3 style="font-size:15px;margin:22px 0 8px;color:var(--muted)">Waiting for payment <small style="font-weight:400">· not confirmed, stock reserved, cancelled automatically after 30 minutes</small></h3>' + head + pending.map(row).join('') + '</tbody></table></div>';
+    return html;
+  }
+
+  /* Refund dialog: gateway payments go back through the gateway; anything
+     paid by transfer, cash or on account is a bank transfer the owner makes
+     and records here with its reference. */
+  function refundModal(o, opts){
+    opts = opts || {};
+    var manual = Commerce.isOffline((o.payment || {}).method) || !(o.payment && o.payment.paymentId) || /^manual:/.test((o.payment || {}).paymentId || '');
+    var m = window.modal(
+      '<h2>Refund · ' + esc(o.ref) + '</h2>' +
+      '<p>' + Store.rupees(o.refundable) + ' can still be refunded of ' + Store.rupees(o.total) + ' paid by ' + esc((o.payment.method || '').replace(' (preview)', '')) + '.' +
+        (manual ? ' This was not a gateway payment, so make the bank transfer yourself and record it here.' : ' It goes back to the original payment method through the gateway; the customer is emailed when it is processed.') + '</p>' +
+      '<div class="row2"><div class="field"><label for="rfAmt">Amount (₹)</label><input id="rfAmt" inputmode="decimal" value="' + (opts.amount != null ? opts.amount / 100 : o.refundable / 100) + '"></div>' +
+      '<div class="field"><label for="rfWhy">Reason</label><input id="rfWhy" value="' + esc(opts.reason || '') + '" placeholder="e.g. returned frame, cancelled order"></div></div>' +
+      (manual ? '<div class="field"><label for="rfRef">Transfer reference</label><input id="rfRef" placeholder="e.g. NEFT UTR"></div>' : '') +
+      '<p class="err" id="rfErr" hidden style="color:#B3261E"></p>' +
+      '<div class="actions"><button type="button" class="btn btn-primary" id="rfGo"><i class="fa-solid fa-rotate-left"></i> ' + (manual ? 'Record refund' : 'Refund through the gateway') + '</button><button type="button" class="btn btn-soft" data-close>Cancel</button></div>'
+    );
+    m.querySelector('#rfGo').addEventListener('click', function(){
+      var btn = this, err = m.querySelector('#rfErr');
+      var amt = toPaise(m.querySelector('#rfAmt').value);
+      if (isNaN(amt) || amt <= 0) { err.hidden = false; err.textContent = 'An amount in rupees, please.'; return; }
+      if (amt > o.refundable) { err.hidden = false; err.textContent = 'Only ' + Store.rupees(o.refundable) + ' can be refunded.'; return; }
+      var reference = manual ? m.querySelector('#rfRef').value.trim() : '';
+      if (manual && !reference) { err.hidden = false; err.textContent = 'The transfer reference, so the customer and the books can match it.'; return; }
+      btn.disabled = true;
+      Store.refund(o, amt, m.querySelector('#rfWhy').value.trim(), { manual: manual, reference: reference, returnId: opts.returnId || null }).then(function(r){
+        window.closeModal();
+        window.toast('Refund of ' + Store.rupees(r.amount) + ' ' + (r.status === 'processed' ? 'done' : r.status) + ' — customer emailed' + (r.status === 'processed' ? '' : ' when it completes'));
+        refresh();
+      }).catch(function(e){ btn.disabled = false; err.hidden = false; err.textContent = e.message || 'The refund could not be made'; });
+    });
+  }
+
+  /* ── Returns & refunds ──────────────────────────────────────────────────── */
+  var RETURNS = [];
+  function returnsPanel(){
+    var open = RETURNS.filter(Commerce.returnOpen), closed = RETURNS.filter(function(r){ return !Commerce.returnOpen(r); });
+    var policy = SITE.returnsPolicy();
+    function row(r){
+      var o = r.order || {};
+      var acts = '';
+      if (r.status === 'requested') acts = '<button type="button" class="btn btn-primary btn-sm" data-ret="' + r.id + '" data-act="approve">Approve</button> <button type="button" class="btn btn-soft btn-sm" data-ret="' + r.id + '" data-act="reject">Reject</button>';
+      else if (r.status === 'approved') acts = '<button type="button" class="btn btn-primary btn-sm" data-ret="' + r.id + '" data-act="received" title="Restocks and refunds ' + Store.rupees(r.amount) + '">Received &amp; refund</button> <button type="button" class="btn btn-soft btn-sm" data-ret="' + r.id + '" data-act="reject">Reject</button>';
+      else if (r.status === 'received') acts = '<button type="button" class="btn btn-primary btn-sm" data-refund-ret="' + r.id + '">Refund ' + Store.rupees(r.amount) + '</button>';
+      return '<tr><td class="tnum"><b>' + esc(o.ref || '') + '</b><br><span style="font-size:12px;color:var(--muted)">' + new Date(r.createdAt).toLocaleDateString('en-IN', { day:'numeric', month:'short' }) + '</span></td>' +
+        '<td>' + esc(o.customer ? (o.customer.shop || o.customer.name) : '') + '<br><span style="font-size:12px;color:var(--muted)">' + esc(o.customer ? o.customer.phone || '' : '') + '</span></td>' +
+        '<td style="white-space:normal;max-width:260px;font-size:13px">' + r.items.map(function(i){ return i.qty + ' × ' + esc(i.name); }).join('<br>') + (r.reason ? '<br><span style="color:var(--muted)">' + esc(r.reason) + '</span>' : '') + '</td>' +
+        '<td style="font-size:13px">' + esc(r.method === 'store' ? 'Brings to store' : r.method === 'courier' ? 'Courier label' : 'Van collects') + '</td>' +
+        '<td class="num">' + Store.rupees(r.amount || 0) + '</td>' +
+        '<td><span class="pill ' + (r.status === 'refunded' ? 'ok' : r.status === 'rejected' || r.status === 'cancelled' ? 'grey' : 'warn') + '">' + esc(r.status) + '</span>' + (r.note ? '<br><span style="font-size:12px;color:var(--muted)">' + esc(r.note) + '</span>' : '') + '</td>' +
+        '<td style="white-space:nowrap">' + acts + '</td></tr>';
+    }
+    var table = function(list){ return '<div class="table-wrap"><table><thead><tr><th>Order</th><th>Customer</th><th>Coming back</th><th>How</th><th class="num">Refund</th><th>Status</th><th></th></tr></thead><tbody>' + list.map(row).join('') + '</tbody></table></div>'; };
+    var refunds = [];
+    ORDERS.forEach(function(o){ (o.refunds || []).forEach(function(r){ refunds.push(Object.assign({ orderRef: o.ref, order: o }, r)); }); });
+    refunds.sort(function(a, b){ return a.createdAt < b.createdAt ? 1 : -1; });
+    return '<p style="font-size:14px;color:var(--ink-2);margin-bottom:16px">Customers with an account start a return from their orders within ' + policy.retailDays + ' days of delivery (' + policy.tradeDays + ' for trade). Guest orders write to <strong>' + esc(policy.email) + '</strong> — record those from the order\u2019s <em>Refund</em> button.</p>' +
+      '<h3 style="font-size:17px;margin-bottom:10px">Open returns <small style="font-weight:400;color:var(--muted)">' + open.length + '</small></h3>' +
+      (open.length ? table(open) : '<div class="empty" style="padding:24px"><p>Nothing waiting.</p></div>') +
+      '<h3 style="font-size:17px;margin:26px 0 10px">Refunds</h3>' +
+      (refunds.length ? '<div class="table-wrap"><table><thead><tr><th>Order</th><th>When</th><th class="num">Amount</th><th>Via</th><th>Reason</th><th>Status</th><th></th></tr></thead><tbody>' +
+        refunds.slice(0, 100).map(function(r){
+          return '<tr><td class="tnum"><b>' + esc(r.orderRef) + '</b></td><td>' + new Date(r.createdAt).toLocaleString('en-IN', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' }) + '</td><td class="num">' + Store.rupees(r.amount) + '</td>' +
+            '<td style="font-size:13px">' + (r.channel === 'manual' ? 'Bank transfer' + (r.reference ? '<br><span style="color:var(--muted)">' + esc(r.reference) + '</span>' : '') : 'Gateway' + (r.gatewayRefundId ? '<br><span style="color:var(--muted);font-size:12px">' + esc(r.gatewayRefundId) + '</span>' : '')) + '</td>' +
+            '<td style="font-size:13px;white-space:normal;max-width:220px">' + esc(r.reason || '') + (r.error ? '<br><span style="color:#B3261E">' + esc(r.error) + '</span>' : '') + '</td>' +
+            '<td><span class="pill ' + (r.status === 'processed' ? 'ok' : r.status === 'failed' ? 'grey' : 'warn') + '">' + esc(r.status) + '</span></td>' +
+            '<td>' + (r.status === 'pending' && r.channel === 'gateway' ? '<button type="button" class="btn btn-soft btn-sm" data-reconcile="' + r.id + '">Reconcile</button>' : '') + '</td></tr>';
+        }).join('') + '</tbody></table></div>' : '<div class="empty" style="padding:24px"><p>No refunds yet.</p></div>') +
+      (closed.length ? '<h3 style="font-size:17px;margin:26px 0 10px">Closed returns</h3>' + table(closed.slice(0, 50)) : '');
+  }
+  function decide(id, action){
+    var note = '';
+    if (action === 'reject') { note = prompt('Why is this return refused? The customer is told.') || ''; if (!note) return; }
+    if (action === 'approve') { note = prompt('A line for the customer (optional) — e.g. "Van collects Tuesday morning"') || ''; }
+    Store.decideReturn(id, action, note).then(function(r){
+      var msg = 'Return ' + (r.ret ? r.ret.status : action) + ' — customer emailed';
+      if (r.refund) msg += ' · refund ' + Store.rupees(r.refund.amount) + ' ' + r.refund.status;
+      if (r.refundError) msg += ' · refund NOT made: ' + r.refundError;
+      window.toast(msg, r.refundError ? 'fa-triangle-exclamation' : undefined);
+      refresh();
+    }).catch(function(e){ window.toast(e.message || 'Could not update that return', 'fa-circle-xmark'); });
+  }
+
+  /* ── Notifications (the outbox) ─────────────────────────────────────────── */
+  var OUTBOX = [];
+  function outboxPanel(){
+    if (!OUTBOX.length) return '<div class="empty"><h3>Nothing sent yet</h3><p>Every email and WhatsApp the store sends is listed here with its status — order confirmations, dispatch and delivery notices, return and refund messages, sign-in codes.</p></div>';
+    var failed = OUTBOX.filter(function(n){ return n.status === 'failed'; }).length;
+    return (Store.remote ? '' : '<div class="note test" style="margin-bottom:16px"><i class="fa-solid fa-flask"></i><div><strong>Preview:</strong> these are rendered from the real templates and stored in this browser; nothing was actually sent. On the live platform the same rows come from the server\u2019s outbox, with delivery status and retries.</div></div>') +
+      (failed ? '<div class="note" style="margin-bottom:16px;border-color:#B3261E"><i class="fa-solid fa-triangle-exclamation" style="color:#B3261E"></i><div>' + failed + ' message' + (failed === 1 ? '' : 's') + ' could not be delivered. Fix the provider, then <em>Send again</em>.</div></div>' : '') +
+      '<div class="table-wrap"><table><thead><tr><th>When</th><th>To</th><th>Order</th><th>Message</th><th>Status</th><th></th></tr></thead><tbody>' +
+      OUTBOX.map(function(n){
+        return '<tr><td style="white-space:nowrap">' + new Date(n.at).toLocaleString('en-IN', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' }) + '</td>' +
+          '<td><i class="' + (n.channel === 'whatsapp' ? 'fa-brands fa-whatsapp' : 'fa-solid fa-envelope') + '" style="color:var(--teal)"></i> ' + esc(n.to) + '</td>' +
+          '<td class="tnum">' + esc(n.orderRef || '') + '</td>' +
+          '<td style="white-space:normal;max-width:420px;font-size:13px"><b>' + esc(n.subject || n.template) + '</b><details><summary style="cursor:pointer;color:var(--teal);font-size:12px">show</summary><pre style="white-space:pre-wrap;font:12.5px/1.5 var(--f-mono);margin:8px 0 0;color:var(--ink-2)">' + esc(n.body || '') + '</pre></details>' + (n.error ? '<span style="color:#B3261E;font-size:12px">' + esc(n.error) + '</span>' : '') + '</td>' +
+          '<td><span class="pill ' + (n.status === 'sent' ? 'ok' : n.status === 'failed' ? 'grey' : 'warn') + '">' + esc(n.status) + '</span>' + (n.attempts > 1 ? '<br><span style="font-size:11px;color:var(--muted)">' + n.attempts + ' tries</span>' : '') + '</td>' +
+          '<td>' + (Store.remote && n.status !== 'queued' ? '<button type="button" class="btn btn-soft btn-sm" data-resend="' + n.id + '">Send again</button>' : '') + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
   }
 
   /* ── Price & stock ──────────────────────────────────────────────────────── */
@@ -648,6 +776,12 @@
     { k: 'areas', label: 'Own-van delivery area', type: 'pairs', a: 'PIN prefix', b: 'area', ka: 'prefix', kb: 'area', rows: 6 },
     { k: 'slots', label: 'Delivery slots', type: 'lines', rows: 4 }
   ];
+  var RETURNS_SPEC = [
+    { k: 'retailDays', label: 'Retail return window, days from delivery', type: 'int' },
+    { k: 'tradeDays', label: 'Trade return window, days from delivery', type: 'int' },
+    { k: 'email', label: 'Returns email for guest orders', type: 'text' },
+    { k: 'excludeCats', label: 'Categories that cannot be returned (ids)', type: 'lines', rows: 2 }
+  ];
   var EYE_SPEC = [
     { k: 'on', label: 'Online booking is open', type: 'bool' },
     { k: 'slots', label: 'Slots each day (HH:MM)', type: 'lines', rows: 5 },
@@ -667,10 +801,12 @@
       '<div style="display:flex;flex-direction:column;gap:22px">' +
         setting('deliv', 'Delivery', 'charges, thresholds, van area', form('deliv', DELIV_SPEC, SITE.get('delivery')), 'delivery') +
         setting('eye', 'Eye tests', '', form('eye', EYE_SPEC, SITE.get('eyeTest')), 'eyeTest') +
+        setting('returns', 'Returns & refunds', 'windows, the guest email', form('returns', RETURNS_SPEC, SITE.get('returns')), 'returns') +
       '</div>' +
     '</div>';
   }
   SAVERS.deliv = function(){ SITE.set('delivery', readForm('deliv', DELIV_SPEC, SITE.get('delivery'))); return ''; };
+  SAVERS.returns = function(){ var r = readForm('returns', RETURNS_SPEC, SITE.get('returns')); if (!(r.retailDays > 0) || !(r.tradeDays > 0)) return '!Return windows must be at least one day'; if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(r.email)) return '!A valid returns email'; SITE.set('returns', r); return ''; };
   SAVERS.eye = function(){ SITE.set('eyeTest', readForm('eye', EYE_SPEC, SITE.get('eyeTest'))); return ''; };
   function storeSaver(i){ return function(){ var s = readForm('store' + i, storeSpec(i), SITE.stores()); if (!s[i].name || !s[i].city) return '!A store needs a name and a city'; SITE.set('stores', s); return ''; }; }
 
@@ -693,11 +829,24 @@
   }
 
   /* ── Needs attention ────────────────────────────────────────────────────── */
+  var ATTENTION = null;
   function attentionPanel(){
-    var orders = Store.orders().filter(function(o){ var st = Store.statusOf(o); return st === 'awaiting prescription' || (st === 'confirmed' && o.items.some(function(i){ return i.needsRx; }) && (!o.rx || o.rx.method === 'later' || o.rx.method === 'call')); });
+    var orders = ORDERS.filter(function(o){ var st = o.status; return st === 'awaiting prescription' || (st === 'confirmed' && o.items.some(function(i){ return i.needsRx; }) && (!o.rx || o.rx.method === 'later' || o.rx.method === 'call')); });
     var low = CATALOG.products.filter(function(p){ return p.stock <= 3; }).sort(function(a,b){ return a.stock - b.stock; });
     var html = '';
-    html += '<h3 style="font-size:17px;margin-bottom:10px">Orders waiting on a prescription</h3>' +
+    var at = ATTENTION || {};
+    var money = (at.paidButCancelled || []).length + (at.unconfirmedRefunds || []).length + (at.doubleCaptures || []).length + (at.failedNotifications || []).length;
+    html += '<h3 style="font-size:17px;margin-bottom:10px">Money to sort out</h3>';
+    if (!money) html += '<div class="empty" style="padding:24px"><p>Nothing — every payment matches an order and every refund is accounted for.</p></div>';
+    else {
+      html += '<div class="table-wrap"><table><thead><tr><th>What</th><th>Order</th><th>Detail</th><th></th></tr></thead><tbody>';
+      (at.paidButCancelled || []).forEach(function(o){ html += '<tr><td><span class="pill warn">paid, cancelled</span></td><td class="tnum">' + esc(o.ref) + '</td><td style="white-space:normal">The payment landed after the order was cancelled (checkout closed or timed out). ' + Store.rupees(o.refundable) + ' to send back.</td><td><button type="button" class="btn btn-primary btn-sm" data-refund="' + esc(o.ref) + '">Refund</button></td></tr>'; });
+      (at.unconfirmedRefunds || []).forEach(function(r){ var o = ORDERS.filter(function(x){ return x.id === r.orderId; })[0]; html += '<tr><td><span class="pill warn">refund unconfirmed</span></td><td class="tnum">' + esc(o ? o.ref : r.orderId) + '</td><td style="white-space:normal">' + Store.rupees(r.amount) + ' — the gateway did not answer. Reconcile before trying again; nothing is sent twice.</td><td><button type="button" class="btn btn-primary btn-sm" data-reconcile="' + r.id + '">Reconcile</button></td></tr>'; });
+      (at.doubleCaptures || []).forEach(function(d){ var o = ORDERS.filter(function(x){ return x.id === d.orderId; })[0]; html += '<tr><td><span class="pill warn">paid twice</span></td><td class="tnum">' + esc(o ? o.ref : d.orderId) + '</td><td style="white-space:normal">Two captures: ' + esc(d.detail.first) + ' and ' + esc(d.detail.second) + '. Refund the second from the gateway dashboard.</td><td></td></tr>'; });
+      (at.failedNotifications || []).forEach(function(n){ html += '<tr><td><span class="pill grey">message failed</span></td><td class="tnum">' + esc(n.order_id ? (ORDERS.filter(function(x){ return x.id === n.order_id; })[0] || {}).ref || '' : '') + '</td><td style="white-space:normal">' + esc(n.channel) + ' to ' + esc(n.recipient) + ' · ' + esc(n.template) + '<br><span style="color:#B3261E;font-size:12px">' + esc(n.error || '') + '</span></td><td><button type="button" class="btn btn-soft btn-sm" data-resend="' + n.id + '">Send again</button></td></tr>'; });
+      html += '</tbody></table></div>';
+    }
+    html += '<h3 style="font-size:17px;margin:26px 0 10px">Orders waiting on a prescription</h3>' +
       (orders.length ? ordersTable(orders) : '<div class="empty" style="padding:24px"><p>None — every powered order has its power.</p></div>');
     html += '<h3 style="font-size:17px;margin:26px 0 10px">Running low</h3>' +
       (low.length ? stockTable(low) : '<div class="empty" style="padding:24px"><p>Every SKU has more than three in stock.</p></div>');
@@ -705,12 +854,28 @@
   }
 
   var currentTab = 'orders';
+  function refresh(){ return paint(currentTab); }
   function paint(tab){
     currentTab = tab;
     var panel = document.getElementById('panel');
-    if (tab === 'orders') panel.innerHTML = ordersTable();
+    /* Tabs that read orders fetch first, then draw. */
+    if (tab === 'orders' || tab === 'returns' || tab === 'outbox' || tab === 'lowest') {
+      panel.innerHTML = '<div class="empty"><p>Loading…</p></div>';
+      var p = loadOrders();
+      if (tab === 'returns') p = p.then(function(){ return Store.fetchReturns().then(function(r){ RETURNS = r; }); });
+      if (tab === 'outbox') p = p.then(function(){ return Store.fetchOutbox().then(function(n){ OUTBOX = n; }); });
+      if (tab === 'lowest') p = p.then(function(){ return Store.fetchAttention().then(function(a){ ATTENTION = a; }); });
+      return p.then(function(){
+        if (currentTab !== tab) return;
+        stats();
+        panel.innerHTML = tab === 'orders' ? ordersTable() : tab === 'returns' ? returnsPanel() : tab === 'outbox' ? outboxPanel() : attentionPanel();
+        wireOrders(panel);
+      }).catch(function(e){
+        if (e && e.status === 401) { signOut(); return; }
+        panel.innerHTML = '<div class="empty"><h3>Could not load</h3><p>' + esc(e && e.message || '') + '</p></div>';
+      });
+    }
     if (tab === 'stock')  panel.innerHTML = stockTable(CATALOG.products);
-    if (tab === 'lowest') panel.innerHTML = attentionPanel();
     if (tab === 'products') {
       panel.innerHTML = productsPanel();
       document.getElementById('addProduct').addEventListener('click', function(){ wireEditor(null); });
@@ -808,12 +973,55 @@
       panel.querySelectorAll('select[data-resv]').forEach(function(sel){ sel.addEventListener('change', function(){ Store.setReservationStatus(sel.getAttribute('data-resv'), sel.value); window.toast('Reservation marked ' + sel.value); stats(); }); });
     }
 
+    wireOrders(panel);
+  }
+  function wireOrders(panel){
     panel.querySelectorAll('select[data-ref]').forEach(function(sel){
       sel.addEventListener('change', function(){
-        Store.setStatus(sel.getAttribute('data-ref'), sel.value);
-        window.toast('Order marked ' + sel.value);
-        stats();
+        var o = orderByRef(sel.getAttribute('data-ref'));
+        if (!o) return;
+        var to = sel.value;
+        if (to === 'cancelled' && Commerce.isPaid((o.payment || {}).status) && !confirm('Cancel ' + o.ref + '? It was paid — refund it afterwards from the Refund button.')) { sel.value = o.status; return; }
+        sel.disabled = true;
+        Store.changeStatus(o, to).then(function(updated){
+          var tpl = Commerce.notificationFor(to);
+          window.toast('Order marked ' + to + (tpl ? ' — customer emailed' + (updated.customer && updated.customer.phone ? ' and WhatsApped' : '') : ''));
+          refresh();
+        }).catch(function(e){
+          if (e.status === 409) window.toast('Someone else changed ' + o.ref + ' first — refreshed', 'fa-triangle-exclamation');
+          else window.toast(e.message || 'Could not change the status', 'fa-circle-xmark');
+          refresh();
+        });
       });
+    });
+    panel.querySelectorAll('[data-cancel]').forEach(function(b){
+      b.addEventListener('click', function(){ var o = orderByRef(b.getAttribute('data-cancel')); if (o && confirm('Cancel ' + o.ref + ' and release its stock?')) Store.changeStatus(o, 'cancelled', 'cancelled from the dashboard').then(refresh).catch(function(e){ window.toast(e.message, 'fa-circle-xmark'); refresh(); }); });
+    });
+    panel.querySelectorAll('[data-paid]').forEach(function(b){
+      b.addEventListener('click', function(){
+        var o = orderByRef(b.getAttribute('data-paid')); if (!o) return;
+        var ref = prompt('Transfer reference (UTR) for ' + Store.rupees(o.total) + ' on ' + o.ref + ':'); if (ref === null) return;
+        Store.markPaid(o, ref).then(function(){ window.toast('Marked paid'); refresh(); }).catch(function(e){ window.toast(e.message, 'fa-circle-xmark'); refresh(); });
+      });
+    });
+    panel.querySelectorAll('[data-refund]').forEach(function(b){
+      b.addEventListener('click', function(){ var o = orderByRef(b.getAttribute('data-refund')); if (o) refundModal(o); });
+    });
+    panel.querySelectorAll('[data-ret]').forEach(function(b){
+      b.addEventListener('click', function(){ decide(b.getAttribute('data-ret'), b.getAttribute('data-act')); });
+    });
+    panel.querySelectorAll('[data-refund-ret]').forEach(function(b){
+      b.addEventListener('click', function(){
+        var r = RETURNS.filter(function(x){ return x.id === b.getAttribute('data-refund-ret'); })[0]; if (!r) return;
+        var o = ORDERS.filter(function(x){ return x.id === r.orderId; })[0]; if (!o) return;
+        refundModal(o, { amount: Math.min(r.amount, o.refundable), reason: 'Return ' + r.id.slice(0, 8), returnId: r.id });
+      });
+    });
+    panel.querySelectorAll('[data-reconcile]').forEach(function(b){
+      b.addEventListener('click', function(){ Store.reconcileRefund(b.getAttribute('data-reconcile')).then(function(r){ window.toast(r ? 'Gateway says: ' + r.status : 'Nothing to reconcile in the preview'); refresh(); }).catch(function(e){ window.toast(e.message, 'fa-circle-xmark'); }); });
+    });
+    panel.querySelectorAll('[data-resend]').forEach(function(b){
+      b.addEventListener('click', function(){ Store.retryNotification(b.getAttribute('data-resend')).then(function(){ window.toast('Queued to send again'); setTimeout(refresh, 400); }); });
     });
   }
   function wireLensRows(){
@@ -830,56 +1038,45 @@
   });
 
   /* ── Login gate ───────────────────────────────────────────────────────────
-     Preview only: the credentials are constants so the client can try it.
-     On the live build this is a real login — the page never holds a
-     password, and the tables themselves reject reads from anyone but the
-     owner, so a bypassed login screen would still show nothing. */
-  var SESSION = 'a1opticals_admin_session_v1';
+     Preview: constant credentials so the client can try it. With an API
+     the same form posts to the server, which sets an HttpOnly owner cookie;
+     every /admin call is refused without it, so a bypassed login screen
+     shows nothing. */
   var OWNER = { email: 'owner@a1opticals.in', pass: 'a1trade', name: 'A1 Opticals · owner' };
 
-  function session(){
-    try { return JSON.parse(sessionStorage.getItem(SESSION) || localStorage.getItem(SESSION) || 'null'); } catch(e){ return null; }
-  }
-  function signIn(remember){
-    var s = { email: OWNER.email, name: OWNER.name, at: Date.now() };
-    try { (remember ? localStorage : sessionStorage).setItem(SESSION, JSON.stringify(s)); } catch(e){}
-    return s;
-  }
   function signOut(){
-    try { sessionStorage.removeItem(SESSION); localStorage.removeItem(SESSION); } catch(e){}
-    location.reload();
+    Store.owner.logout().then(function(){ location.reload(); });
   }
 
   function showDash(s){
     document.getElementById('loginWrap').hidden = true;
     document.getElementById('dash').hidden = false;
-    document.getElementById('whoami').textContent = s.name;
+    document.getElementById('whoami').textContent = s.name || s.email || OWNER.name;
     document.getElementById('signOut').addEventListener('click', signOut);
-    stats();
+    if (Store.remote) document.getElementById('dashNote').innerHTML = '<i class="fa-solid fa-lock"></i><div><strong>Connected to the API</strong> — orders, returns, refunds and the outbox come from the server. Product, price and site edits are saved here and mirrored to the server, which prices every order.</div>';
+    loadOrders().then(stats).catch(function(){});
     var want = new URLSearchParams(location.search).get('tab');
     var tb = want && document.querySelector('#tabs .tab[data-t="' + want + '"]');
     if (tb) tb.click(); else paint('orders');
   }
 
-  var s = session();
-  if (s) {
-    showDash(s);
-  } else {
+  function showLogin(){
     document.getElementById('loginWrap').hidden = false;
     document.getElementById('loginForm').addEventListener('submit', function(e){
       e.preventDefault();
       var em = document.getElementById('lEmail').value.trim().toLowerCase();
       var pw = document.getElementById('lPass').value;
-      if (em === OWNER.email && pw === OWNER.pass) {
-        showDash(signIn(document.getElementById('lRemember').checked));
-        window.toast('Signed in as ' + OWNER.name);
-      } else {
-        document.getElementById('lErr').hidden = false;
-        document.getElementById('lPass').value = '';
-        document.getElementById('lPass').focus();
-      }
+      var remember = document.getElementById('lRemember').checked;
+      var fail = function(msg){
+        var el = document.getElementById('lErr'); el.hidden = false; el.textContent = msg || 'That email and password do not match.';
+        document.getElementById('lPass').value = ''; document.getElementById('lPass').focus();
+      };
+      if (!Store.remote && !(em === OWNER.email && pw === OWNER.pass)) return fail();
+      Store.owner.login(em, pw, remember).then(function(s){ showDash(s); window.toast('Signed in as ' + (s.name || em)); }).catch(function(err){ fail(err.message); });
     });
   }
+
+  Store.owner.check().then(function(s){ if (s) showDash(s); else showLogin(); }).catch(showLogin);
 })();
 </script>
 <style>@media(max-width:900px){ #impGrid{ grid-template-columns:1fr !important } #stats{ grid-template-columns:1fr 1fr !important } }</style>
